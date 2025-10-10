@@ -1,13 +1,16 @@
 # Ployl Raspberry Pi sensor helpers
 
 This repository collects small helper packages that encapsulate the interaction
-with common Raspberry Pi peripherals:
+with common Raspberry Pi peripherals and now also includes a React Native
+dashboard for visualising captured measurements:
 
 * `hw416a` – wraps the GPIO control logic for the HW416A presence sensor.
 * `max30102` – provides an I2C abstraction for the MAX30102
   pulse-oximeter/heart-rate sensor.
 * `sendht22` – reads the SEN-DHT22 temperature and humidity sensor via the
   Adafruit_DHT helpers.
+* `dashboard` – an Expo powered React Native application that aggregates the
+  latest samples and history for all sensors.
 
 ## Installation
 
@@ -135,3 +138,54 @@ expected:
 ```bash
 python -m pytest
 ```
+
+## React Native dashboard
+
+The `dashboard/` directory contains an Expo project that visualises data
+published by the Python controllers. It expects a small HTTP API on the
+Raspberry Pi that exposes sensor readings under the following endpoints:
+
+* `GET /hw416a/latest` and `GET /hw416a/history`
+* `GET /max30102/latest` and `GET /max30102/history`
+* `GET /sendht22/latest` and `GET /sendht22/history`
+
+Each endpoint should return JSON data shaped like:
+
+```json
+{
+  "id": "unique-sample-id",
+  "kind": "sendht22",
+  "capturedAt": "2024-01-12T19:30:00+00:00",
+  "values": {"temperature_c": 21.4, "humidity": 43.2}
+}
+```
+
+Provide an array to expose historical measurements. You can build the API with
+any framework (FastAPI, Flask, Django) by wiring your controllers into the
+endpoints above.
+
+### Prerequisites
+
+Install Node.js (>= 18) and the Expo CLI. From inside the `dashboard/` folder
+run:
+
+```bash
+npm install
+```
+
+### Local development
+
+The default configuration points to `http://raspberrypi.local:8000` as the API
+base URL. Adjust `DEFAULT_API_BASE` in `dashboard/App.tsx` if your Raspberry Pi
+is reachable via a different hostname or port.
+
+Start the Expo development server:
+
+```bash
+npm start
+```
+
+Use the Expo Go app or a simulator/emulator to open the project. Pull-to-refresh
+on the dashboard screen to fetch the latest measurements. Tap a sensor card to
+inspect the historical readings; offline cache support ensures the latest data
+remains available even when the Pi is temporarily unreachable.
