@@ -6,13 +6,15 @@ with common Raspberry Pi peripherals:
 * `hw416a` – wraps the GPIO control logic for the HW416A presence sensor.
 * `max30102` – provides an I2C abstraction for the MAX30102
   pulse-oximeter/heart-rate sensor.
+* `sendht22` – reads the SEN-DHT22 temperature and humidity sensor via the
+  Adafruit_DHT helpers.
 
 ## Installation
 
 * Python >= 3.9 is recommended.
 * Install the hardware dependencies when running on a Raspberry Pi:
   ```bash
-  python -m pip install RPi.GPIO smbus2
+  python -m pip install RPi.GPIO smbus2 Adafruit_DHT
   ```
   When running the unit tests or working on non-Raspberry Pi hardware you can
   skip these optional packages and rely on the mock backends that the tests
@@ -95,6 +97,35 @@ with MAX30102Controller() as sensor:
 You can override configuration parameters such as sample rate, LED pulse width
 and I2C address via keyword arguments when calling :meth:`initialize` or when
 instantiating the controller.
+
+## SEN-DHT22 usage
+
+The `sendht22` package exposes a `SENDHT22Controller` that reads temperature and
+humidity values from a SEN-DHT22 module. Run the demonstration script to verify
+your wiring and see the logging output:
+
+```bash
+python examples/sendht22_demo.py
+```
+
+By default the controller expects the data pin to be wired to BCM pin 4. If you
+use a different pin simply override the `data_pin` argument when creating the
+controller. The class validates retry parameters and logs each measurement so
+you can observe fluctuations in your environment:
+
+```python
+from sendht22 import SENDHT22Controller
+
+with SENDHT22Controller(data_pin=17) as sensor:
+    reading = sensor.read()
+    print(reading.as_dict())
+    print("Temperature in Fahrenheit:", reading.temperature_f)
+```
+
+For advanced testing scenarios you can inject a custom `read_func` compatible
+with the `Adafruit_DHT.read_retry` API and even supply a custom
+``sensor_type``. This allows running the unit tests on non-Raspberry Pi hosts
+without accessing the real sensor hardware.
 
 ## Development
 
