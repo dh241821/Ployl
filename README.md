@@ -9,6 +9,9 @@ dashboard for visualising captured measurements:
   pulse-oximeter/heart-rate sensor.
 * `sendht22` – reads the SEN-DHT22 temperature and humidity sensor via the
   Adafruit_DHT helpers.
+* `ledmodule` – controls a PWM capable GPIO pin to drive an indicator LED.
+* `lcd1602` – writes sensor status messages to a HD44780 compatible 16x2 LCD
+  via an I2C backpack.
 * `dashboard` – an Expo powered React Native application that aggregates the
   latest samples and history for all sensors.
 
@@ -129,6 +132,55 @@ For advanced testing scenarios you can inject a custom `read_func` compatible
 with the `Adafruit_DHT.read_retry` API and even supply a custom
 ``sensor_type``. This allows running the unit tests on non-Raspberry Pi hosts
 without accessing the real sensor hardware.
+
+## LED module usage
+
+The `ledmodule` package exposes a :class:`LEDModuleController` that wraps a
+single PWM capable GPIO pin. It is ideal for connecting a simple indicator LED
+that mirrors sensor states.
+
+```bash
+python examples/led_module_demo.py
+```
+
+The demo blinks the LED on startup, holds it at half brightness for a short
+period and then switches it off again. Adjust the brightness or PWM frequency by
+passing arguments when instantiating the controller:
+
+```python
+from ledmodule import LEDModuleController
+
+with LEDModuleController(pin=18, frequency_hz=500) as led:
+    led.turn_on(brightness=60)
+```
+
+`LEDModuleController` validates brightness values and allows you to inject a
+custom sleep function so that the `blink` helper can be tested with mocks.
+
+## LCD1602 usage
+
+The `lcd1602` package drives HD44780 compatible 16x2 displays that are equipped
+with a PCF8574 I2C backpack. Run the demonstration script to verify that the bus
+address is reachable and to see typical status updates:
+
+```bash
+python examples/lcd1602_demo.py
+```
+
+Use the controller in your own code to surface live sensor states directly on
+the Raspberry Pi:
+
+```python
+from lcd1602 import LCD1602Controller
+
+with LCD1602Controller(address=0x27) as display:
+    display.display_lines("HW416A: Ready", "Temp: 21.5°C")
+```
+
+You can toggle the backlight via :meth:`set_backlight`, and the class exposes
+`display_lines` and `display_text` helpers for updating single lines. The
+implementation supports dependency injection of the SMBus factory to simplify
+unit testing on development hosts.
 
 ## Development
 
