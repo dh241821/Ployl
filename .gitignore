@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+node_modules/
+*.log
+dashboard/.expo/
+dashboard/.expo-shared/
+dashboard/.turbo/
+dashboard/ios/
+dashboard/android/
