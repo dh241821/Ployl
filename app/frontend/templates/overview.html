@@ -36,38 +36,6 @@
   </section>
 
   <script type="application/json" id="overview-data">
-    {{ {
-      "vehicles": [
-        {
-          "id": vehicle.id,
-          "radio_id": vehicle.radio_id,
-          "vehicle_type": vehicle.vehicle_type,
-        }
-        for vehicle in vehicles
-      ],
-      "assignments": [
-        {
-          "id": assignment.id,
-          "vehicle_id": assignment.vehicle_id,
-          "device_id": assignment.device_id,
-          "assigned_from": assignment.assigned_from.isoformat() if assignment.assigned_from else None,
-          "component_id": assignment.component_id,
-        }
-        for assignment in assignments
-      ],
-      "devices": [
-        {
-          "id": device.id,
-          "inventory_number": device.inventory_number,
-          "serial_number": device.serial_number,
-          "status": device.status,
-          "device_type": {
-            "name": device.device_type.name,
-            "category": device.device_type.category.name if device.device_type and device.device_type.category else None,
-          },
-        }
-        for device in devices
-      ],
-    } | tojson }}
+    {{ overview_data | tojson }}
   </script>
 {% endblock %}

@@ -144,26 +144,6 @@
   </section>
 
   <script type="application/json" id="devices-data">
-    {{ {
-      "categories": [
-        {"id": category.id, "name": category.name}
-        for category in categories
-      ],
-      "device_types": [
-        {
-          "id": product.id,
-          "name": product.name,
-          "manufacturer": product.manufacturer,
-          "model": product.model,
-          "category_id": product.category.id if product.category else None,
-          "is_composite": product.is_composite,
-          "components": [
-            {"id": component.id, "name": component.name}
-            for component in product.components
-          ],
-        }
-        for product in device_types
-      ],
-    } | tojson }}
+    {{ devices_data | tojson }}
   </script>
 {% endblock %}

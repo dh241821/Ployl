@@ -65,6 +65,44 @@ async def overview(request: Request) -> HTMLResponse:
         )
         devices = await _load_devices(session)
 
+    overview_data = {
+        "vehicles": [
+            {
+                "id": vehicle.id,
+                "radio_id": vehicle.radio_id,
+                "vehicle_type": vehicle.vehicle_type,
+            }
+            for vehicle in vehicles
+        ],
+        "assignments": [
+            {
+                "id": assignment.id,
+                "vehicle_id": assignment.vehicle_id,
+                "device_id": assignment.device_id,
+                "assigned_from": assignment.assigned_from.isoformat()
+                if assignment.assigned_from
+                else None,
+                "component_id": assignment.component_id,
+            }
+            for assignment in assignments
+        ],
+        "devices": [
+            {
+                "id": device.id,
+                "inventory_number": device.inventory_number,
+                "serial_number": device.serial_number,
+                "status": device.status,
+                "device_type": {
+                    "name": device.device_type.name,
+                    "category": device.device_type.category.name
+                    if device.device_type and device.device_type.category
+                    else None,
+                },
+            }
+            for device in devices
+        ],
+    }
+
     return TEMPLATES.TemplateResponse(
         "overview.html",
         {
@@ -74,6 +112,7 @@ async def overview(request: Request) -> HTMLResponse:
             "vehicles": vehicles,
             "assignments": assignments,
             "devices": devices,
+            "overview_data": overview_data,
         },
     )
 
@@ -98,6 +137,27 @@ async def devices_page(request: Request) -> HTMLResponse:
         )
         devices = await _load_devices(session)
 
+    devices_data = {
+        "categories": [
+            {"id": category.id, "name": category.name} for category in categories
+        ],
+        "device_types": [
+            {
+                "id": product.id,
+                "name": product.name,
+                "manufacturer": product.manufacturer,
+                "model": product.model,
+                "category_id": product.category.id if product.category else None,
+                "is_composite": product.is_composite,
+                "components": [
+                    {"id": component.id, "name": component.name}
+                    for component in product.components
+                ],
+            }
+            for product in device_types
+        ],
+    }
+
     return TEMPLATES.TemplateResponse(
         "devices.html",
         {
@@ -107,6 +167,7 @@ async def devices_page(request: Request) -> HTMLResponse:
             "categories": categories,
             "device_types": device_types,
             "devices": devices,
+            "devices_data": devices_data,
         },
     )
 
@@ -162,6 +223,85 @@ async def device_detail(request: Request, device_id: int) -> HTMLResponse:
             ).scalars()
         )
 
+    device_detail_data = {
+        "device": {
+            "id": device.id,
+            "inventory_number": device.inventory_number,
+            "status": device.status,
+            "serial_number": device.serial_number,
+            "device_type": {
+                "name": device.device_type.name,
+                "category": device.device_type.category.name
+                if device.device_type and device.device_type.category
+                else None,
+            },
+        },
+        "assignments": [
+            {
+                "id": assignment.id,
+                "vehicle_id": assignment.vehicle_id,
+                "vehicle": assignment.vehicle.radio_id if assignment.vehicle else None,
+                "assigned_from": assignment.assigned_from.isoformat()
+                if assignment.assigned_from
+                else None,
+                "assigned_to": assignment.assigned_to.isoformat()
+                if assignment.assigned_to
+                else None,
+            }
+            for assignment in history_assignments
+        ],
+        "checks": [
+            {
+                "id": check.id,
+                "check_type": check.check_type,
+                "performed_on": check.performed_on.isoformat()
+                if check.performed_on
+                else None,
+                "due_on": check.due_on.isoformat() if check.due_on else None,
+                "result": check.result,
+                "attachments": [
+                    {
+                        "id": attachment.id,
+                        "file_path": attachment.file_path,
+                        "description": attachment.description,
+                    }
+                    for attachment in check.attachments
+                ],
+            }
+            for check in checks
+        ],
+        "repairs": [
+            {
+                "id": repair.id,
+                "reported_on": repair.reported_on.isoformat()
+                if repair.reported_on
+                else None,
+                "repaired_on": repair.repaired_on.isoformat()
+                if repair.repaired_on
+                else None,
+                "reported_issue": repair.reported_issue,
+                "repair_action": repair.repair_action,
+                "attachments": [
+                    {
+                        "id": attachment.id,
+                        "file_path": attachment.file_path,
+                        "description": attachment.description,
+                    }
+                    for attachment in repair.attachments
+                ],
+            }
+            for repair in repairs
+        ],
+        "vehicles": [
+            {
+                "id": vehicle.id,
+                "radio_id": vehicle.radio_id,
+                "vehicle_type": vehicle.vehicle_type,
+            }
+            for vehicle in vehicles
+        ],
+    }
+
     return TEMPLATES.TemplateResponse(
         "device_detail.html",
         {
@@ -175,6 +315,7 @@ async def device_detail(request: Request, device_id: int) -> HTMLResponse:
             "repairs": repairs,
             "now": datetime.utcnow,
             "vehicles": vehicles,
+            "device_detail_data": device_detail_data,
         },
     )
 
@@ -189,6 +330,26 @@ async def repairs_page(request: Request) -> HTMLResponse:
         )
         devices = await _load_devices(session)
 
+    repairs_data = {
+        "devices": [
+            {
+                "id": device.id,
+                "inventory_number": device.inventory_number,
+                "serial_number": device.serial_number,
+                "device_type": {
+                    "name": device.device_type.name,
+                    "category_id": device.device_type.category.id
+                    if device.device_type and device.device_type.category
+                    else None,
+                    "category": device.device_type.category.name
+                    if device.device_type and device.device_type.category
+                    else None,
+                },
+            }
+            for device in devices
+        ],
+    }
+
     return TEMPLATES.TemplateResponse(
         "repairs.html",
         {
@@ -197,6 +358,7 @@ async def repairs_page(request: Request) -> HTMLResponse:
             "page": "repairs",
             "categories": categories,
             "devices": devices,
+            "repairs_data": repairs_data,
         },
     )
 

@@ -47,20 +47,6 @@
   </section>
 
   <script type="application/json" id="repair-filter-data">
-    {{ {
-      "devices": [
-        {
-          "id": device.id,
-          "inventory_number": device.inventory_number,
-          "serial_number": device.serial_number,
-          "device_type": {
-            "name": device.device_type.name,
-            "category_id": device.device_type.category.id if device.device_type.category else None,
-            "category": device.device_type.category.name if device.device_type.category else None,
-          },
-        }
-        for device in devices
-      ],
-    } | tojson }}
+    {{ repairs_data | tojson }}
   </script>
 {% endblock %}
