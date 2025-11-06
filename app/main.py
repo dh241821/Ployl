@@ -17,7 +17,7 @@ from .api import (
     vehicles,
 )
 from .core.config import get_settings
-from .database import AsyncSessionFactory, engine
+from .database import engine
 from .frontend import STATIC_DIR, router as frontend_router
 from .services.scheduler import configure_scheduler
 from .utils.migrations import run_migrations
@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     finally:
         if scheduler:
             scheduler.shutdown(wait=False)
-        await AsyncSessionFactory.close_all()
+        await engine.dispose()
 
 
 def create_app() -> FastAPI:
