@@ -195,7 +195,9 @@ class Attachment(Base):
     __tablename__ = "attachment"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    repair_id: Mapped[Optional[int]] = mapped_column(ForeignKey("repair_log.id", ondelete="CASCADE"))
+    repair_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("repair_log.id", ondelete="CASCADE")
+    )
     safety_check_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("safety_check.id", ondelete="CASCADE")
     )

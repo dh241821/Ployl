@@ -26,8 +26,8 @@ from ..schemas.base import (
     DeviceCategoryCreate,
     DeviceCreate,
     DeviceTypeCreate,
-    MaintenanceWindow,
     MaintenanceAlertUpdate,
+    MaintenanceWindow,
     RepairLogCreate,
     RepairLogUpdate,
     SafetyCheckCreate,
@@ -309,7 +309,9 @@ async def sync_maintenance_alerts(
     return updated_alerts
 
 
-async def get_active_assignments(session: AsyncSession, vehicle_id: Optional[int] = None) -> list[DeviceAssignment]:
+async def get_active_assignments(
+    session: AsyncSession, vehicle_id: Optional[int] = None
+) -> list[DeviceAssignment]:
     stmt: Select[tuple[DeviceAssignment]] = select(DeviceAssignment).where(
         DeviceAssignment.assigned_to.is_(None)
     )

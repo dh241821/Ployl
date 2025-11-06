@@ -5,7 +5,6 @@ from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
 from ..database import AsyncSessionFactory

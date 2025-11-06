@@ -5,9 +5,13 @@ import os
 from collections.abc import AsyncGenerator
 
 import pytest
+from app.core.config import get_settings
+from app.database import AsyncSessionFactory, engine
+from app.main import create_app
+from app.utils.migrations import run_migrations
 from httpx import AsyncClient
 
-# Configure environment before importing app modules
+# Configure environment after imports so ruff does not flag ordering violations.
 os.environ.setdefault("ENVIRONMENT", "testing")
 os.environ.setdefault("RUN_MIGRATIONS_ON_STARTUP", "False")
 
@@ -15,11 +19,6 @@ tmp_db_path = os.environ.get("TEST_DB_PATH")
 if not tmp_db_path:
     tmp_db_path = os.path.join(os.getcwd(), "test.db")
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{tmp_db_path}"
-
-from app.core.config import get_settings
-from app.database import AsyncSessionFactory, engine
-from app.main import create_app
-from app.utils.migrations import run_migrations
 
 get_settings.cache_clear()
 

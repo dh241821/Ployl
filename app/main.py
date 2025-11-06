@@ -18,7 +18,8 @@ from .api import (
 )
 from .core.config import get_settings
 from .database import engine
-from .frontend import STATIC_DIR, router as frontend_router
+from .frontend import STATIC_DIR
+from .frontend import router as frontend_router
 from .services.scheduler import configure_scheduler
 from .utils.migrations import run_migrations
 

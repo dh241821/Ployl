@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import pytest
-
 from app.services.scheduler import maintenance_job
+
 
 @pytest.mark.asyncio
 async def test_full_device_workflow(client):
@@ -44,7 +44,10 @@ async def test_full_device_workflow(client):
     assert device_type_resp.json()["category"]["name"] == "Monitoring"
 
     components = device_type_resp.json()["components"]
-    component_serials = {str(component["id"]): f"SERIAL-{component['name']}" for component in components}
+    component_serials = {
+        str(component["id"]): f"SERIAL-{component['name']}"
+        for component in components
+    }
 
     device_payload = {
         "inventory_number": "INV-1000",
@@ -121,7 +124,8 @@ async def test_full_device_workflow(client):
     assert ack_resp.status_code == 200
     assert ack_resp.json()["acknowledged_at"] is not None
 
-    # Maintenance view should include the device when due within window (set to 365 days default -> due date 1 year)
+    # Maintenance view should include the device when due within the configured window.
+    # Default is 365 days, which ensures the due date (1 year) is shown in the result set.
     upcoming_resp = await client.get("/maintenance/upcoming", params={"days": 400})
     assert upcoming_resp.status_code == 200
     windows = upcoming_resp.json()

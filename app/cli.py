@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Optional
 
 import typer
 from rich.console import Console
 from rich.table import Table
+from sqlalchemy import select
 
 from .core.config import get_settings
 from .database import AsyncSessionFactory, engine
+from .models.entities import DeviceCategory, DeviceType
+from .schemas.base import (
+    ComponentTypeCreate,
+    DeviceCategoryCreate,
+    DeviceTypeCreate,
+)
 from .services.device_service import (
     create_device_category,
     create_device_type,
@@ -164,14 +170,13 @@ def seed_products() -> None:
                     payload = DeviceTypeCreate(
                         name=product["name"],
                         category_id=category_obj.id,
-                        components=[ComponentTypeCreate(**comp) for comp in product.get("components", [])],
+                        components=[
+                            ComponentTypeCreate(**component)
+                            for component in product.get("components", [])
+                        ],
                     )
                     await create_device_type(session, payload)
             await session.commit()
-
-    from sqlalchemy import select  # local import to avoid circular dependency
-    from .models.entities import DeviceCategory, DeviceType
-    from .schemas.base import ComponentTypeCreate, DeviceCategoryCreate, DeviceTypeCreate
 
     asyncio.run(_seed())
     console.print("[green]Standardprodukte angelegt (falls nicht vorhanden).[/green]")
