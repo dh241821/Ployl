@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ app_title }} – Medizinprodukteverwaltung</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <div class="container">
+        <h1>{{ app_title }}</h1>
+        <p>Grafische Oberfläche zur Verwaltung der Medizinprodukte, Fahrzeuge und Wartungen.</p>
+      </div>
+    </header>
+    <main class="container">
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+      <section aria-labelledby="alerts-heading" class="card">
+        <div class="card-header">
+          <h2 id="alerts-heading">Wartungswarnungen</h2>
+          <button type="button" id="refresh-data" class="secondary">Aktualisieren</button>
+        </div>
+        <div class="card-body">
+          <p class="help">Hier erscheinen offene MTK/STK-Warnungen und Meldungen aus Reparaturen.</p>
+          <div class="table-wrapper">
+            <table id="alert-table" class="data-table">
+              <thead>
+                <tr>
+                  <th>Gerät</th>
+                  <th>Fahrzeug</th>
+                  <th>Typ</th>
+                  <th>Fälligkeit</th>
+                  <th>Resttage</th>
+                  <th>Hinweis</th>
+                  <th>Aktionen</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="upcoming-heading" class="card">
+        <div class="card-header">
+          <h2 id="upcoming-heading">Bevorstehende Prüfungen</h2>
+        </div>
+        <div class="card-body">
+          <div class="table-wrapper">
+            <table id="upcoming-table" class="data-table">
+              <thead>
+                <tr>
+                  <th>Gerät</th>
+                  <th>Komponente</th>
+                  <th>Prüfung</th>
+                  <th>Fälligkeit</th>
+                  <th>Resttage</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="vehicle-heading" class="card">
+        <div class="card-header">
+          <h2 id="vehicle-heading">Fahrzeuge</h2>
+        </div>
+        <div class="card-body layout-grid">
+          <form id="vehicle-form" class="form-card" autocomplete="off">
+            <h3>Fahrzeug hinzufügen</h3>
+            <label>Funkkennung<input name="radio_id" required /></label>
+            <label>
+              Fahrzeugtyp
+              <select name="vehicle_type" required>
+                <option value="">Bitte wählen …</option>
+                <option value="RTW-C">RTW-C</option>
+                <option value="NEF">NEF</option>
+                <option value="KTW">KTW</option>
+              </select>
+            </label>
+            <label>Name<input name="name" required /></label>
+            <label>In Betrieb seit<input type="date" name="in_service_since" /></label>
+            <label>Außer Dienst seit<input type="date" name="out_of_service" /></label>
+            <button type="submit">Speichern</button>
+          </form>
+          <div class="table-wrapper">
+            <table id="vehicle-table" class="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Funkkennung</th>
+                  <th>Typ</th>
+                  <th>In Dienst</th>
+                  <th>Außer Dienst</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="device-type-heading" class="card">
+        <div class="card-header">
+          <h2 id="device-type-heading">Gerätetypen</h2>
+        </div>
+        <div class="card-body layout-grid">
+          <form id="device-type-form" class="form-card" autocomplete="off">
+            <h3>Gerätetyp anlegen</h3>
+            <label>Name<input name="name" required /></label>
+            <label>Hersteller<input name="manufacturer" /></label>
+            <label>Modell<input name="model" /></label>
+            <label>MTK Intervall (Tage)<input type="number" min="1" name="default_mtk_interval_days" /></label>
+            <label>STK Intervall (Tage)<input type="number" min="1" name="default_stk_interval_days" /></label>
+            <label class="checkbox">
+              <input type="checkbox" name="is_composite" /> Verbundgerät
+            </label>
+            <label>Komponenten (eine pro Zeile)<textarea name="components" rows="4" placeholder="z. B. Gestell\nAuflagefläche"></textarea></label>
+            <button type="submit">Speichern</button>
+          </form>
+          <div class="table-wrapper">
+            <table id="device-type-table" class="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Hersteller</th>
+                  <th>Modell</th>
+                  <th>Komponenten</th>
+                  <th>MTK/STK</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="device-heading" class="card">
+        <div class="card-header">
+          <h2 id="device-heading">Geräte</h2>
+        </div>
+        <div class="card-body layout-grid">
+          <form id="device-form" class="form-card" autocomplete="off">
+            <h3>Gerät hinzufügen</h3>
+            <label>Inventarnummer<input name="inventory_number" required /></label>
+            <label>Gerätetyp<select id="device-type-select" name="device_type_id" required></select></label>
+            <label>Seriennummer<input name="serial_number" /></label>
+            <label>Kaufdatum<input type="date" name="purchase_date" /></label>
+            <label>Status<input name="status" value="aktiv" /></label>
+            <label>Notizen<textarea name="notes" rows="3"></textarea></label>
+            <div id="component-serials" class="form-fieldset" hidden>
+              <h4>Komponenten-Seriennummern</h4>
+            </div>
+            <button type="submit">Speichern</button>
+          </form>
+          <div class="table-wrapper">
+            <table id="device-table" class="data-table">
+              <thead>
+                <tr>
+                  <th>Inventarnummer</th>
+                  <th>Typ</th>
+                  <th>Status</th>
+                  <th>Seriennummer</th>
+                  <th>Komponenten</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="assignment-heading" class="card">
+        <div class="card-header">
+          <h2 id="assignment-heading">Fahrzeugzuordnungen</h2>
+        </div>
+        <div class="card-body layout-grid">
+          <form id="assignment-form" class="form-card" autocomplete="off">
+            <h3>Gerät zuordnen</h3>
+            <label>Gerät<select id="assignment-device" name="device_id" required></select></label>
+            <label>Komponente<select id="assignment-component" name="component_id"></select></label>
+            <label>Fahrzeug<select id="assignment-vehicle" name="vehicle_id" required></select></label>
+            <label>Beginn<input type="datetime-local" name="assigned_from" /></label>
+            <label>Verantwortlich<input name="assigned_by" /></label>
+            <label>Notizen<textarea name="notes" rows="2"></textarea></label>
+            <button type="submit">Zuordnen</button>
+          </form>
+          <div class="table-wrapper">
+            <table id="assignment-table" class="data-table">
+              <thead>
+                <tr>
+                  <th>Gerät</th>
+                  <th>Komponente</th>
+                  <th>Fahrzeug</th>
+                  <th>Beginn</th>
+                  <th>Notiz</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="check-heading" class="card">
+        <div class="card-header">
+          <h2 id="check-heading">MTK/STK Prüfungen</h2>
+        </div>
+        <div class="card-body layout-grid">
+          <form id="check-form" class="form-card" autocomplete="off">
+            <h3>Prüfung dokumentieren</h3>
+            <label>Gerät<select id="check-device" name="device_id" required></select></label>
+            <label>Komponente<select id="check-component" name="component_id"></select></label>
+            <label>Prüfart
+              <select name="check_type" required>
+                <option value="MTK">MTK</option>
+                <option value="STK">STK</option>
+              </select>
+            </label>
+            <label>Durchgeführt am<input type="date" name="performed_on" required /></label>
+            <label>Fällig am<input type="date" name="due_on" /></label>
+            <label>Durchgeführt von<input name="performed_by" /></label>
+            <label>Ergebnis<input name="result" /></label>
+            <label>Zertifikatspfad<input name="certificate_path" /></label>
+            <label>Notizen<textarea name="notes" rows="2"></textarea></label>
+            <button type="submit">Speichern</button>
+          </form>
+          <div class="table-wrapper">
+            <table id="check-table" class="data-table">
+              <thead>
+                <tr>
+                  <th>Gerät</th>
+                  <th>Komponente</th>
+                  <th>Prüfart</th>
+                  <th>Datum</th>
+                  <th>Fällig</th>
+                  <th>Ergebnis</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="repair-heading" class="card">
+        <div class="card-header">
+          <h2 id="repair-heading">Reparaturlog</h2>
+        </div>
+        <div class="card-body layout-grid">
+          <form id="repair-form" class="form-card" autocomplete="off">
+            <h3>Reparatur erfassen</h3>
+            <label>Gerät<select id="repair-device" name="device_id" required></select></label>
+            <label>Komponente<select id="repair-component" name="component_id"></select></label>
+            <label>Gemeldet am<input type="date" name="reported_on" required /></label>
+            <label>Behoben am<input type="date" name="repaired_on" /></label>
+            <label>Fehlerbeschreibung<textarea name="reported_issue" rows="2" required></textarea></label>
+            <label>Maßnahmen<textarea name="repair_action" rows="2"></textarea></label>
+            <label>Durchgeführt von<input name="repaired_by" /></label>
+            <label>Kosten (€)<input type="number" min="0" step="0.01" name="cost" /></label>
+            <label>Dokumentpfad<input name="document_path" /></label>
+            <label>Notizen<textarea name="notes" rows="2"></textarea></label>
+            <button type="submit">Speichern</button>
+          </form>
+          <div class="table-wrapper">
+            <table id="repair-table" class="data-table">
+              <thead>
+                <tr>
+                  <th>Gerät</th>
+                  <th>Komponente</th>
+                  <th>Gemeldet</th>
+                  <th>Behoben</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="page-footer">
+      <div class="container">
+        <small>Stand: {{ now().strftime("%d.%m.%Y") if now else "" }}</small>
+      </div>
+    </footer>
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>

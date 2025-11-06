@@ -4,10 +4,12 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from .api import assignments, checks, device_types, devices, maintenance, repairs, vehicles
 from .core.config import get_settings
 from .database import AsyncSessionFactory, engine
+from .frontend import STATIC_DIR, router as frontend_router
 from .services.scheduler import configure_scheduler
 from .utils.migrations import run_migrations
 
@@ -45,7 +47,10 @@ def create_app() -> FastAPI:
     app.include_router(assignments.router)
     app.include_router(checks.router)
     app.include_router(repairs.router)
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
     app.include_router(maintenance.router)
+    app.include_router(frontend_router)
 
     return app
 

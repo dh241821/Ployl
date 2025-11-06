@@ -20,6 +20,8 @@ sämtliche im Auftrag genannten Anforderungen sowie zusätzliche Automatisierung
 - Verwaltung von Wartungswarnungen (Acknowledgement/Resolve) über API und CLI
 - Automatische Statusumschaltung von Geräten bei offenen bzw. abgeschlossenen Reparaturen
 - Typer-CLI für Migrationen, Konfigurationsübersicht und Wartungsreport
+- Moderne Weboberfläche zur Pflege aller Datenpunkte (Geräte, Fahrzeuge, Prüfungen,
+  Reparaturen, Wartungswarnungen)
 
 ## Schnellstart
 
@@ -51,8 +53,10 @@ sämtliche im Auftrag genannten Anforderungen sowie zusätzliche Automatisierung
    uvicorn app.main:app --reload
    ```
 
-Die API ist anschließend unter `http://localhost:8000` erreichbar. Die OpenAPI-Dokumentation
-findet sich unter `http://localhost:8000/docs`.
+Die API ist anschließend unter `http://localhost:8000` erreichbar. Die grafische Oberfläche
+steht direkt unter `http://localhost:8000/` zur Verfügung und bietet Formulare zum Anlegen
+und Pflegen sämtlicher Stammdaten, Zuordnungen, Prüfungen und Reparaturmeldungen. Die
+OpenAPI-Dokumentation findet sich weiterhin unter `http://localhost:8000/docs`.
 
 ## Tests
 

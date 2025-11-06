@@ -14,6 +14,7 @@ dependencies = [
     "alembic",
     "pydantic[email]",
     "python-multipart",
+    "jinja2",
     "apscheduler",
     "passlib[bcrypt]",
     "python-dateutil",
