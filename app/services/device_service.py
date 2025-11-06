@@ -14,6 +14,7 @@ from ..models.entities import (
     DeviceAssignment,
     DeviceComponent,
     DeviceType,
+    MaintenanceAlert,
     RepairLog,
     SafetyCheck,
 )
@@ -22,7 +23,9 @@ from ..schemas.base import (
     DeviceCreate,
     DeviceTypeCreate,
     MaintenanceWindow,
+    MaintenanceAlertUpdate,
     RepairLogCreate,
+    RepairLogUpdate,
     SafetyCheckCreate,
     VehicleCreate,
 )
@@ -122,6 +125,12 @@ async def create_safety_check(
         )
 
     await session.flush()
+    await _resolve_alerts_for_check(
+        session,
+        safety_check.device_id,
+        safety_check.check_type,
+        safety_check.component_id,
+    )
     return safety_check
 
 
@@ -150,6 +159,21 @@ async def create_repair_log(session: AsyncSession, payload: RepairLogCreate) -> 
     return repair
 
 
+async def update_repair_log(
+    session: AsyncSession, repair_id: int, payload: RepairLogUpdate
+) -> RepairLog | None:
+    repair = await session.get(RepairLog, repair_id)
+    if not repair:
+        return None
+
+    update_data = payload.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(repair, key, value)
+
+    await session.flush()
+    return repair
+
+
 async def get_upcoming_maintenance(
     session: AsyncSession,
     days: Optional[int] = None,
@@ -160,11 +184,16 @@ async def get_upcoming_maintenance(
     stmt = (
         select(
             SafetyCheck.device_id,
+            SafetyCheck.component_id,
             Device.inventory_number,
             SafetyCheck.check_type,
             SafetyCheck.due_on,
+            DeviceComponent.id,
+            ComponentType.name,
         )
         .join(Device, Device.id == SafetyCheck.device_id)
+        .outerjoin(DeviceComponent, DeviceComponent.id == SafetyCheck.component_id)
+        .outerjoin(ComponentType, ComponentType.id == DeviceComponent.component_type_id)
         .where(SafetyCheck.due_on.is_not(None))
         .where(SafetyCheck.due_on <= date.today() + timedelta(days=window))
         .order_by(SafetyCheck.due_on)
@@ -179,13 +208,69 @@ async def get_upcoming_maintenance(
         results.append(
             MaintenanceWindow(
                 device_id=row.device_id,
+                component_id=row.component_id,
                 device_inventory_number=row.inventory_number,
                 check_type=row.check_type,
                 due_on=row.due_on,
                 days_until_due=days_until_due,
+                component_name=row.name,
             )
         )
     return results
+
+
+async def sync_maintenance_alerts(
+    session: AsyncSession, windows: list[MaintenanceWindow]
+) -> list[MaintenanceAlert]:
+    existing = await session.execute(
+        select(MaintenanceAlert).where(MaintenanceAlert.resolved_at.is_(None))
+    )
+    alerts_by_key: dict[tuple[int, Optional[int], str], MaintenanceAlert] = {
+        (alert.device_id, alert.component_id, alert.check_type): alert
+        for alert in existing.scalars()
+    }
+
+    seen_keys: set[tuple[int, Optional[int], str]] = set()
+    updated_alerts: list[MaintenanceAlert] = []
+
+    for window in windows:
+        key = (window.device_id, window.component_id, window.check_type)
+        seen_keys.add(key)
+        severity = "critical" if window.days_until_due < 0 else "warning"
+        message = (
+            f"{window.check_type} fällig für {window.device_inventory_number}"
+            if window.component_name is None
+            else (
+                f"{window.check_type} fällig für {window.device_inventory_number}"
+                f" / {window.component_name}"
+            )
+        )
+        alert = alerts_by_key.get(key)
+        if alert:
+            alert.severity = severity
+            alert.due_on = window.due_on
+            alert.days_until_due = window.days_until_due
+            alert.message = message
+        else:
+            alert = MaintenanceAlert(
+                device_id=window.device_id,
+                component_id=window.component_id,
+                check_type=window.check_type,
+                due_on=window.due_on,
+                severity=severity,
+                days_until_due=window.days_until_due,
+                message=message,
+            )
+            session.add(alert)
+        updated_alerts.append(alert)
+
+    if alerts_by_key:
+        now = datetime.utcnow()
+        for key, alert in alerts_by_key.items():
+            if key not in seen_keys and alert.resolved_at is None:
+                alert.resolved_at = now
+
+    return updated_alerts
 
 
 async def get_active_assignments(session: AsyncSession, vehicle_id: Optional[int] = None) -> list[DeviceAssignment]:
@@ -238,6 +323,50 @@ async def detach_device(
     await session.execute(stmt)
 
 
+async def get_alerts(
+    session: AsyncSession, include_resolved: bool = False
+) -> list[MaintenanceAlert]:
+    stmt = select(MaintenanceAlert)
+    if not include_resolved:
+        stmt = stmt.where(MaintenanceAlert.resolved_at.is_(None))
+    stmt = stmt.order_by(MaintenanceAlert.due_on.asc())
+    rows = await session.execute(stmt)
+    return list(rows.scalars())
+
+
+async def update_alert(
+    session: AsyncSession, alert_id: int, payload: MaintenanceAlertUpdate
+) -> MaintenanceAlert | None:
+    alert = await session.get(MaintenanceAlert, alert_id)
+    if not alert:
+        return None
+    now = datetime.utcnow()
+    if payload.acknowledged:
+        alert.acknowledged_at = now
+    if payload.resolve:
+        alert.resolved_at = now
+    await session.flush()
+    return alert
+
+
+async def _resolve_alerts_for_check(
+    session: AsyncSession, device_id: int, check_type: str, component_id: Optional[int]
+) -> None:
+    stmt = select(MaintenanceAlert).where(
+        MaintenanceAlert.device_id == device_id,
+        MaintenanceAlert.check_type == check_type,
+        MaintenanceAlert.resolved_at.is_(None),
+    )
+    if component_id is None:
+        stmt = stmt.where(MaintenanceAlert.component_id.is_(None))
+    else:
+        stmt = stmt.where(MaintenanceAlert.component_id == component_id)
+    rows = await session.execute(stmt)
+    now = datetime.utcnow()
+    for alert in rows.scalars():
+        alert.resolved_at = now
+
+
 __all__ = [
     "create_vehicle",
     "create_device_type",
@@ -245,8 +374,12 @@ __all__ = [
     "assign_device",
     "create_safety_check",
     "create_repair_log",
+    "update_repair_log",
     "get_upcoming_maintenance",
+    "sync_maintenance_alerts",
     "get_active_assignments",
     "get_device_history",
     "detach_device",
+    "get_alerts",
+    "update_alert",
 ]

@@ -16,8 +16,10 @@ from sqlalchemy import (
     event,
     func,
     select,
+    update,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm.attributes import get_history
 
 from ..database import Base
 
@@ -83,6 +85,9 @@ class Device(Base):
     assignments: Mapped[list["DeviceAssignment"]] = relationship(back_populates="device")
     safety_checks: Mapped[list["SafetyCheck"]] = relationship(back_populates="device")
     repairs: Mapped[list["RepairLog"]] = relationship(back_populates="device")
+    maintenance_alerts: Mapped[list["MaintenanceAlert"]] = relationship(
+        back_populates="device", cascade="all, delete-orphan"
+    )
 
 
 class DeviceComponent(Base):
@@ -99,6 +104,9 @@ class DeviceComponent(Base):
     assignments: Mapped[list["DeviceAssignment"]] = relationship(back_populates="component")
     safety_checks: Mapped[list["SafetyCheck"]] = relationship(back_populates="component")
     repairs: Mapped[list["RepairLog"]] = relationship(back_populates="component")
+    maintenance_alerts: Mapped[list["MaintenanceAlert"]] = relationship(
+        back_populates="component"
+    )
 
     __table_args__ = (
         UniqueConstraint("device_id", "component_type_id", name="uq_device_component_type"),
@@ -185,6 +193,29 @@ class Attachment(Base):
     safety_check: Mapped[Optional[SafetyCheck]] = relationship(back_populates="attachments")
 
 
+class MaintenanceAlert(Base):
+    __tablename__ = "maintenance_alert"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("device.id", ondelete="CASCADE"))
+    component_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("device_component.id", ondelete="SET NULL")
+    )
+    check_type: Mapped[str] = mapped_column(String(3), nullable=False)
+    due_on: Mapped[date] = mapped_column(Date(), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    days_until_due: Mapped[int] = mapped_column(Integer, nullable=False)
+    message: Mapped[Optional[str]] = mapped_column(Text())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+    acknowledged_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    device: Mapped[Device] = relationship(back_populates="maintenance_alerts")
+    component: Mapped[Optional[DeviceComponent]] = relationship(
+        back_populates="maintenance_alerts"
+    )
+
+
 @event.listens_for(DeviceAssignment, "before_insert")
 def set_assignment_start(mapper, connection, target: DeviceAssignment) -> None:
     if target.assigned_from is None:
@@ -218,6 +249,23 @@ def set_due_on(mapper, connection, target: SafetyCheck) -> None:
         target.due_on = target.performed_on + timedelta(days=interval_days)
 
 
+@event.listens_for(RepairLog, "after_insert")
+def mark_device_in_repair(mapper, connection, target: RepairLog) -> None:
+    if target.repaired_on is None:
+        connection.execute(
+            update(Device).where(Device.id == target.device_id).values(status="in_wartung")
+        )
+
+
+@event.listens_for(RepairLog, "after_update")
+def mark_device_active(mapper, connection, target: RepairLog) -> None:
+    history = get_history(target, "repaired_on")
+    if history.has_changes() and target.repaired_on is not None:
+        connection.execute(
+            update(Device).where(Device.id == target.device_id).values(status="aktiv")
+        )
+
+
 __all__ = [
     "Vehicle",
     "DeviceType",
@@ -228,4 +276,5 @@ __all__ = [
     "SafetyCheck",
     "RepairLog",
     "Attachment",
+    "MaintenanceAlert",
 ]

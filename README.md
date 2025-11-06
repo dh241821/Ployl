@@ -16,6 +16,9 @@ sämtliche im Auftrag genannten Anforderungen sowie zusätzliche Automatisierung
 - Vollständige Gerätehistorie (Zuordnungen, Prüfungen, Reparaturen)
 - Wartungsübersicht mit Berechnung bevorstehender MTK/STK Fälligkeiten
 - Automatischer Hintergrundjob (APScheduler) zur Benachrichtigung über fällige Checks
+  inklusive persistenter Wartungswarnungen und Eskalationsstufen
+- Verwaltung von Wartungswarnungen (Acknowledgement/Resolve) über API und CLI
+- Automatische Statusumschaltung von Geräten bei offenen bzw. abgeschlossenen Reparaturen
 - Typer-CLI für Migrationen, Konfigurationsübersicht und Wartungsreport
 
 ## Schnellstart
@@ -68,6 +71,7 @@ pytest
 ```bash
 python -m app.cli migrate   # Schema erstellen
 python -m app.cli upcoming  # Fällige MTK/STK Checks anzeigen
+python -m app.cli alerts    # Persistente Wartungswarnungen anzeigen
 python -m app.cli settings  # Effektive Konfiguration ausgeben
 ```
 

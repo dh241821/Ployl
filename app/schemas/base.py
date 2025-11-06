@@ -165,6 +165,18 @@ class RepairLogRead(ORMBase, RepairLogBase):
     attachments: list["AttachmentRead"] = Field(default_factory=list)
 
 
+class RepairLogUpdate(BaseModel):
+    component_id: Optional[int] = None
+    reported_on: Optional[date] = None
+    repaired_on: Optional[date] = None
+    reported_issue: Optional[str] = None
+    repair_action: Optional[str] = None
+    repaired_by: Optional[str] = None
+    cost: Optional[float] = Field(default=None, ge=0)
+    document_path: Optional[str] = None
+    notes: Optional[str] = None
+
+
 class AttachmentBase(BaseModel):
     file_path: str
     description: Optional[str] = None
@@ -185,6 +197,27 @@ class MaintenanceWindow(BaseModel):
     check_type: str
     due_on: date
     days_until_due: int
+    component_id: Optional[int] = None
+    component_name: Optional[str] = None
+
+
+class MaintenanceAlertRead(ORMBase):
+    id: int
+    device_id: int
+    component_id: Optional[int] = None
+    check_type: str
+    due_on: date
+    severity: str
+    days_until_due: int
+    message: Optional[str] = None
+    created_at: datetime
+    acknowledged_at: Optional[datetime] = None
+    resolved_at: Optional[datetime] = None
+
+
+class MaintenanceAlertUpdate(BaseModel):
+    acknowledged: Optional[bool] = None
+    resolve: Optional[bool] = None
 
 
 SafetyCheckRead.update_forward_refs()

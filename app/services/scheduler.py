@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
 from ..database import AsyncSessionFactory
-from ..services.device_service import get_upcoming_maintenance
+from ..services.device_service import get_upcoming_maintenance, sync_maintenance_alerts
 
 logger = logging.getLogger(__name__)
 
@@ -17,16 +17,19 @@ logger = logging.getLogger(__name__)
 async def maintenance_job() -> None:
     async with AsyncSessionFactory() as session:
         windows = await get_upcoming_maintenance(session)
-        if not windows:
+        alerts = await sync_maintenance_alerts(session, windows)
+        await session.commit()
+        if not alerts:
             logger.info("Maintenance check completed: no upcoming MTK/STK due soon")
             return
-        for window in windows:
+        for alert in alerts:
             logger.warning(
-                "Upcoming %s check for %s due on %s (%s days)",
-                window.check_type,
-                window.device_inventory_number,
-                window.due_on,
-                window.days_until_due,
+                "Upcoming %s check for device %s due on %s (%s days) [%s]",
+                alert.check_type,
+                alert.device.inventory_number if alert.device else alert.device_id,
+                alert.due_on,
+                alert.days_until_due,
+                alert.severity,
             )
 
 
