@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+pytest.cache/
+ployl.db
+test.db

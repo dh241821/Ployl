@@ -1,0 +1,46 @@
+from __future__ import annotations
+
+import logging
+from datetime import datetime
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..core.config import get_settings
+from ..database import AsyncSessionFactory
+from ..services.device_service import get_upcoming_maintenance
+
+logger = logging.getLogger(__name__)
+
+
+async def maintenance_job() -> None:
+    async with AsyncSessionFactory() as session:
+        windows = await get_upcoming_maintenance(session)
+        if not windows:
+            logger.info("Maintenance check completed: no upcoming MTK/STK due soon")
+            return
+        for window in windows:
+            logger.warning(
+                "Upcoming %s check for %s due on %s (%s days)",
+                window.check_type,
+                window.device_inventory_number,
+                window.due_on,
+                window.days_until_due,
+            )
+
+
+def configure_scheduler() -> AsyncIOScheduler:
+    settings = get_settings()
+    scheduler = AsyncIOScheduler(timezone=settings.scheduler_timezone)
+    scheduler.add_job(
+        maintenance_job,
+        trigger=IntervalTrigger(hours=12, timezone=settings.scheduler_timezone),
+        id="maintenance_reminder",
+        replace_existing=True,
+        next_run_time=datetime.now(),
+    )
+    return scheduler
+
+
+__all__ = ["configure_scheduler", "maintenance_job"]
