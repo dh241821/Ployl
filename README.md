@@ -27,7 +27,10 @@ sämtliche im Auftrag genannten Anforderungen sowie zusätzliche Automatisierung
 
    ```bash
    python -m venv .venv
+   # macOS/Linux
    source .venv/bin/activate
+   # Windows PowerShell
+   .venv\\Scripts\\Activate.ps1
    ```
 
 2. Abhängigkeiten installieren:
