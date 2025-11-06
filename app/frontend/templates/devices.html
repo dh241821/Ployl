@@ -7,17 +7,32 @@
     <div class="card-body layout-grid">
       <form id="category-form" class="form-card" autocomplete="off">
         <h3>Neue Kategorie</h3>
+        <input type="hidden" name="category_id" />
         <label>Name<input name="name" required /></label>
-        <button type="submit">Kategorie anlegen</button>
+        <div class="action-row">
+          <button type="submit">Kategorie speichern</button>
+          <button type="button" class="secondary" id="category-cancel" hidden>Abbrechen</button>
+        </div>
       </form>
       <div class="table-wrapper">
         <table class="data-table" id="category-table">
           <thead>
-            <tr><th>Name</th></tr>
+            <tr>
+              <th>Name</th>
+              <th>Aktionen</th>
+            </tr>
           </thead>
           <tbody>
             {% for category in categories %}
-              <tr><td>{{ category.name }}</td></tr>
+              <tr>
+                <td>{{ category.name }}</td>
+                <td>
+                  <div class="table-actions">
+                    <button type="button" class="secondary small" data-action="edit" data-id="{{ category.id }}">Bearbeiten</button>
+                    <button type="button" class="danger small" data-action="delete" data-id="{{ category.id }}">Löschen</button>
+                  </div>
+                </td>
+              </tr>
             {% endfor %}
           </tbody>
         </table>
@@ -33,6 +48,7 @@
     <div class="card-body layout-grid">
       <form id="device-type-form" class="form-card" autocomplete="off">
         <h3>Neues Produkt</h3>
+        <input type="hidden" name="device_type_id" />
         <label>Name<input name="name" required /></label>
         <label>Hersteller<input name="manufacturer" /></label>
         <label>Modell<input name="model" /></label>
@@ -48,8 +64,11 @@
         <label>MTK-Intervall (Tage)<input type="number" min="1" name="default_mtk_interval_days" /></label>
         <label>STK-Intervall (Tage)<input type="number" min="1" name="default_stk_interval_days" /></label>
         <label class="checkbox"><input type="checkbox" name="is_composite" /> Verbundgerät</label>
-        <label>Komponenten (eine pro Zeile)<textarea name="components" rows="3" placeholder="z. B. Patientenmodul&#10;Therapiemodul&#10;Monitormodul"></textarea></label>
-        <button type="submit">Produkt speichern</button>
+        <label>Komponenten (neue Einträge, eine pro Zeile)<textarea name="components" rows="3" placeholder="z. B. Patientenmodul&#10;Therapiemodul&#10;Monitormodul"></textarea></label>
+        <div class="action-row">
+          <button type="submit">Produkt speichern</button>
+          <button type="button" class="secondary" id="device-type-cancel" hidden>Abbrechen</button>
+        </div>
       </form>
       <div class="table-wrapper">
         <table class="data-table" id="device-type-table">
@@ -60,6 +79,7 @@
               <th>Hersteller</th>
               <th>Modell</th>
               <th>Komponenten</th>
+              <th>Aktionen</th>
             </tr>
           </thead>
           <tbody>
@@ -80,6 +100,13 @@
                     —
                   {% endif %}
                 </td>
+                <td>
+                  <div class="table-actions">
+                    <button type="button" class="secondary small" data-action="edit" data-id="{{ product.id }}">Bearbeiten</button>
+                    <button type="button" class="secondary small" data-action="add-component" data-id="{{ product.id }}">Komponente</button>
+                    <button type="button" class="danger small" data-action="delete" data-id="{{ product.id }}">Löschen</button>
+                  </div>
+                </td>
               </tr>
             {% endfor %}
           </tbody>
@@ -95,6 +122,7 @@
     <div class="card-body layout-grid">
       <form id="device-form" class="form-card" autocomplete="off">
         <h3>Gerät hinzufügen</h3>
+        <input type="hidden" name="device_id" />
         <label>Inventarnummer<input name="inventory_number" required /></label>
         <label>
           Produkt
@@ -112,7 +140,10 @@
         <div id="component-serials" class="form-fieldset" hidden>
           <h4>Komponenten-Seriennummern</h4>
         </div>
-        <button type="submit">Gerät speichern</button>
+        <div class="action-row">
+          <button type="submit">Gerät speichern</button>
+          <button type="button" class="secondary" id="device-cancel" hidden>Abbrechen</button>
+        </div>
       </form>
       <div class="table-wrapper">
         <table class="data-table" id="device-table">
@@ -123,7 +154,7 @@
               <th>Kategorie</th>
               <th>Seriennummer</th>
               <th>Status</th>
-              <th>Details</th>
+              <th>Aktionen</th>
             </tr>
           </thead>
           <tbody>
@@ -134,7 +165,13 @@
                 <td>{{ device.device_type.category.name if device.device_type.category else "—" }}</td>
                 <td>{{ device.serial_number or "—" }}</td>
                 <td>{{ device.status }}</td>
-                <td><a class="button-link" href="/ui/devices/{{ device.id }}">Öffnen</a></td>
+                <td>
+                  <div class="table-actions">
+                    <button type="button" class="secondary small" data-action="edit" data-id="{{ device.id }}">Bearbeiten</button>
+                    <button type="button" class="danger small" data-action="delete" data-id="{{ device.id }}">Löschen</button>
+                    <a class="button-link" href="/ui/devices/{{ device.id }}">Öffnen</a>
+                  </div>
+                </td>
               </tr>
             {% endfor %}
           </tbody>

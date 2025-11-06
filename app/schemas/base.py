@@ -38,6 +38,10 @@ class DeviceCategoryCreate(DeviceCategoryBase):
     pass
 
 
+class DeviceCategoryUpdate(BaseModel):
+    name: Optional[str] = None
+
+
 class DeviceCategoryRead(ORMBase, DeviceCategoryBase):
     id: int
 
@@ -70,6 +74,7 @@ class DeviceTypeCreate(DeviceTypeBase):
 
 
 class DeviceTypeUpdate(BaseModel):
+    name: Optional[str] = None
     manufacturer: Optional[str] = None
     model: Optional[str] = None
     category_id: Optional[int] = None

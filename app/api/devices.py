@@ -90,4 +90,16 @@ async def device_history(
     }
 
 
+@router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_device(
+    device_id: int, session: AsyncSession = Depends(get_db_session)
+) -> None:
+    device = await session.get(Device, device_id)
+    if not device:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+
+    await session.delete(device)
+    await session.commit()
+
+
 __all__ = ["router"]

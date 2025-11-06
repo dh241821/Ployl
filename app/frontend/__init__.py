@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from ..database import AsyncSessionFactory
@@ -20,6 +20,7 @@ from ..models.entities import (
     SafetyCheck,
     Vehicle,
 )
+from ..services.device_service import get_upcoming_maintenance
 
 FRONTEND_DIR = Path(__file__).resolve().parent
 STATIC_DIR = FRONTEND_DIR / "static"
@@ -64,6 +65,10 @@ async def overview(request: Request) -> HTMLResponse:
             ).scalars()
         )
         devices = await _load_devices(session)
+        open_repairs = await session.execute(
+            select(func.count()).select_from(RepairLog).where(RepairLog.repaired_on.is_(None))
+        )
+        maintenance_windows = await get_upcoming_maintenance(session)
 
     overview_data = {
         "vehicles": [
@@ -109,6 +114,23 @@ async def overview(request: Request) -> HTMLResponse:
         ],
     }
 
+    metrics = {
+        "total_devices": len(devices),
+        "active_devices": sum(1 for device in devices if (device.status or "").lower() == "aktiv"),
+        "active_assignments": len({assignment.device_id for assignment in assignments}),
+        "open_repairs": open_repairs.scalar_one(),
+        "mtk_due": sum(
+            1
+            for window in maintenance_windows
+            if (window.check_type or "").lower() == "mtk"
+        ),
+        "stk_due": sum(
+            1
+            for window in maintenance_windows
+            if (window.check_type or "").lower() == "stk"
+        ),
+    }
+
     return TEMPLATES.TemplateResponse(
         "overview.html",
         {
@@ -119,6 +141,7 @@ async def overview(request: Request) -> HTMLResponse:
             "assignments": assignments,
             "devices": devices,
             "overview_data": overview_data,
+            "metrics": metrics,
         },
     )
 
@@ -161,6 +184,24 @@ async def devices_page(request: Request) -> HTMLResponse:
                 ],
             }
             for product in device_types
+        ],
+        "devices": [
+            {
+                "id": device.id,
+                "inventory_number": device.inventory_number,
+                "serial_number": device.serial_number,
+                "status": device.status,
+                "purchase_date": device.purchase_date.isoformat()
+                if device.purchase_date
+                else None,
+                "notes": device.notes,
+                "device_type_id": device.device_type.id,
+                "device_type_name": device.device_type.name,
+                "category_id": device.device_type.category.id
+                if device.device_type and device.device_type.category
+                else None,
+            }
+            for device in devices
         ],
     }
 

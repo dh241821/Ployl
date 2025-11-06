@@ -79,7 +79,11 @@ function initOverview() {
   const tbody = document.querySelector("#location-device-table tbody");
   const vehicleForm = document.getElementById("vehicle-form");
   const vehicleTable = document.querySelector("#vehicle-table tbody");
-  const assignments = (data.assignments || []).map((assignment) => ({
+  const vehicleIdInput = vehicleForm?.querySelector('input[name="vehicle_id"]');
+  const vehicleCancel = document.getElementById("vehicle-cancel");
+  const vehicleSubmit = vehicleForm?.querySelector('button[type="submit"]');
+
+  let assignments = (data.assignments || []).map((assignment) => ({
     ...assignment,
     vehicle_id: Number(assignment.vehicle_id),
     device_id: Number(assignment.device_id),
@@ -89,6 +93,24 @@ function initOverview() {
     ...vehicle,
     id: Number(vehicle.id),
   }));
+
+  function mapVehicle(item) {
+    return {
+      id: Number(item.id),
+      radio_id: item.radio_id,
+      vehicle_type: item.vehicle_type,
+      in_service_since: item.in_service_since || null,
+      out_of_service: item.out_of_service || null,
+    };
+  }
+
+  function resetVehicleForm() {
+    if (!vehicleForm) return;
+    vehicleForm.reset();
+    if (vehicleIdInput) vehicleIdInput.value = "";
+    if (vehicleSubmit) vehicleSubmit.textContent = "Standort speichern";
+    vehicleCancel?.setAttribute("hidden", "hidden");
+  }
 
   function renderVehicleTable() {
     if (!vehicleTable) return;
@@ -103,7 +125,12 @@ function initOverview() {
           <td>${vehicle.vehicle_type}</td>
           <td>${formatDate(vehicle.in_service_since)}</td>
           <td>${formatDate(vehicle.out_of_service)}</td>
-        `;
+          <td>
+            <div class="table-actions">
+              <button type="button" class="secondary small" data-action="edit" data-id="${vehicle.id}">Bearbeiten</button>
+              <button type="button" class="danger small" data-action="delete" data-id="${vehicle.id}">Löschen</button>
+            </div>
+          </td>`;
         vehicleTable.appendChild(row);
       });
   }
@@ -135,8 +162,11 @@ function initOverview() {
           <td>${device.serial_number || "—"}</td>
           <td>${device.status || "—"}</td>
           <td>${formatDate(assignment.assigned_from)}</td>
-          <td><a class="button-link" href="/ui/devices/${device.id}">Öffnen</a></td>
-        `;
+          <td>
+            <div class="table-actions">
+              <a class="button-link" href="/ui/devices/${device.id}">Öffnen</a>
+            </div>
+          </td>`;
         tbody.appendChild(row);
       });
   }
@@ -156,9 +186,16 @@ function initOverview() {
         select.appendChild(option);
       });
     if (selectedId) {
-      select.value = selectedId;
+      select.value = String(selectedId);
       renderAssignments(Number(selectedId));
     }
+  }
+
+  async function reloadVehicles(selectedId) {
+    const refreshed = await apiFetch("/vehicles/");
+    data.vehicles = (refreshed || []).map(mapVehicle);
+    renderVehicleTable();
+    renderLocationSelect(selectedId);
   }
 
   vehicleForm?.addEventListener("submit", async (event) => {
@@ -174,33 +211,78 @@ function initOverview() {
       showToast("Bitte Funkkennung und Typ angeben.", "error");
       return;
     }
+
+    const editingId = vehicleIdInput?.value ? Number(vehicleIdInput.value) : null;
+
     try {
-      const vehicle = await apiFetch("/vehicles/", {
-        method: "POST",
-        body: payload,
-      });
-      const stored = {
-        id: Number(vehicle.id),
-        radio_id: vehicle.radio_id,
-        vehicle_type: vehicle.vehicle_type,
-        in_service_since: vehicle.in_service_since || null,
-        out_of_service: vehicle.out_of_service || null,
-      };
-      const refreshed = await apiFetch("/vehicles/");
-      data.vehicles = (refreshed || []).map((item) => ({
-        id: Number(item.id),
-        radio_id: item.radio_id,
-        vehicle_type: item.vehicle_type,
-        in_service_since: item.in_service_since || null,
-        out_of_service: item.out_of_service || null,
-      }));
-      renderVehicleTable();
-      renderLocationSelect(String(stored.id));
-      vehicleForm.reset();
-      showToast("Standort gespeichert.", "info");
+      if (editingId) {
+        await apiFetch(`/vehicles/${editingId}`, {
+          method: "PATCH",
+          body: payload,
+        });
+        await reloadVehicles(editingId);
+        showToast("Standort aktualisiert.", "info");
+      } else {
+        const vehicle = await apiFetch("/vehicles/", {
+          method: "POST",
+          body: payload,
+        });
+        await reloadVehicles(Number(vehicle.id));
+        showToast("Standort gespeichert.", "info");
+      }
+      resetVehicleForm();
     } catch (err) {
       showToast(err.message, "error");
     }
+  });
+
+  vehicleTable?.addEventListener("click", async (event) => {
+    const button = event.target instanceof HTMLElement ? event.target.closest("button[data-action]") : null;
+    if (!button) return;
+    const id = Number(button.dataset.id);
+    if (!id) return;
+    const vehicle = data.vehicles.find((item) => item.id === id);
+    if (!vehicle && button.dataset.action === "edit") {
+      showToast("Standort nicht gefunden.", "error");
+      return;
+    }
+    if (button.dataset.action === "edit") {
+      if (!vehicleForm || !vehicle) return;
+      if (vehicleIdInput) vehicleIdInput.value = String(vehicle.id);
+      const radioInput = vehicleForm.querySelector('input[name="radio_id"]');
+      const typeInput = vehicleForm.querySelector('input[name="vehicle_type"]');
+      const inServiceInput = vehicleForm.querySelector('input[name="in_service_since"]');
+      const outServiceInput = vehicleForm.querySelector('input[name="out_of_service"]');
+      if (radioInput) radioInput.value = vehicle.radio_id;
+      if (typeInput) typeInput.value = vehicle.vehicle_type;
+      if (inServiceInput) inServiceInput.value = vehicle.in_service_since ? vehicle.in_service_since : "";
+      if (outServiceInput) outServiceInput.value = vehicle.out_of_service ? vehicle.out_of_service : "";
+      if (vehicleSubmit) vehicleSubmit.textContent = "Standort aktualisieren";
+      vehicleCancel?.removeAttribute("hidden");
+      radioInput?.focus();
+    } else if (button.dataset.action === "delete") {
+      if (!confirm("Standort wirklich löschen? Zugeordnete Geräte werden nicht entfernt.")) return;
+      try {
+        await apiFetch(`/vehicles/${id}`, { method: "DELETE" });
+        data.vehicles = data.vehicles.filter((item) => item.id !== id);
+        assignments = assignments.filter((assignment) => assignment.vehicle_id !== id);
+        renderVehicleTable();
+        const currentSelection = select ? Number(select.value) : null;
+        const nextSelection = currentSelection === id ? null : currentSelection;
+        renderLocationSelect(nextSelection || undefined);
+        if (currentSelection === id && tbody) {
+          tbody.innerHTML = "";
+        }
+        resetVehicleForm();
+        showToast("Standort entfernt.", "info");
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    }
+  });
+
+  vehicleCancel?.addEventListener("click", () => {
+    resetVehicleForm();
   });
 
   select?.addEventListener("change", (event) => {
@@ -213,21 +295,87 @@ function initOverview() {
   });
 
   renderVehicleTable();
-  renderLocationSelect(select?.value);
+  if (select?.value) {
+    renderLocationSelect(Number(select.value));
+  } else {
+    renderLocationSelect();
+  }
 }
 
 function initDevices() {
-  const data = readJsonScript("devices-data") || { categories: [], device_types: [] };
+  const data = readJsonScript("devices-data") || { categories: [], device_types: [], devices: [] };
   const categoryForm = document.getElementById("category-form");
   const categoryTable = document.querySelector("#category-table tbody");
   const categorySelects = [document.getElementById("product-category-select")];
+  const categoryIdInput = categoryForm?.querySelector('input[name="category_id"]');
+  const categoryCancel = document.getElementById("category-cancel");
+  const categorySubmit = categoryForm?.querySelector('button[type="submit"]');
+
   const deviceTypeForm = document.getElementById("device-type-form");
   const deviceTypeTable = document.querySelector("#device-type-table tbody");
   const deviceTypeSelect = document.getElementById("device-type-select");
+  const deviceTypeIdInput = deviceTypeForm?.querySelector('input[name="device_type_id"]');
+  const deviceTypeCancel = document.getElementById("device-type-cancel");
+  const deviceTypeSubmit = deviceTypeForm?.querySelector('button[type="submit"]');
+
   const componentSerials = document.getElementById("component-serials");
+
   const deviceForm = document.getElementById("device-form");
   const deviceTable = document.querySelector("#device-table tbody");
-  data.devices = data.devices || [];
+  const deviceIdInput = deviceForm?.querySelector('input[name="device_id"]');
+  const deviceCancel = document.getElementById("device-cancel");
+  const deviceSubmit = deviceForm?.querySelector('button[type="submit"]');
+  const inventoryInput = deviceForm?.querySelector('input[name="inventory_number"]');
+  const serialInput = deviceForm?.querySelector('input[name="serial_number"]');
+  const purchaseInput = deviceForm?.querySelector('input[name="purchase_date"]');
+  const statusInput = deviceForm?.querySelector('input[name="status"]');
+  const notesInput = deviceForm?.querySelector('textarea[name="notes"]');
+
+  function mapCategory(item) {
+    return { id: Number(item.id), name: item.name };
+  }
+
+  function mapDeviceType(item) {
+    const categoryId = item.category_id ?? item.category?.id ?? null;
+    const components = Array.isArray(item.components)
+      ? item.components.map((component) =>
+          typeof component === "string"
+            ? { id: undefined, name: component }
+            : { id: component.id, name: component.name }
+        )
+      : [];
+    return {
+      id: Number(item.id),
+      name: item.name,
+      manufacturer: item.manufacturer,
+      model: item.model,
+      category_id: categoryId,
+      is_composite: Boolean(item.is_composite),
+      default_mtk_interval_days: item.default_mtk_interval_days || null,
+      default_stk_interval_days: item.default_stk_interval_days || null,
+      components,
+    };
+  }
+
+  function mapDevice(item) {
+    const deviceType = item.device_type || {};
+    const category = deviceType.category || {};
+    return {
+      id: Number(item.id),
+      inventory_number: item.inventory_number,
+      serial_number: item.serial_number || null,
+      status: item.status || "",
+      purchase_date: item.purchase_date || null,
+      notes: item.notes || null,
+      device_type_id: deviceType.id || item.device_type_id || null,
+      device_type_name: deviceType.name || item.device_type_name || deviceType?.name || "—",
+      category_id: category.id ?? item.category_id ?? deviceType?.category?.id ?? null,
+    };
+  }
+
+  data.categories = (data.categories || []).map(mapCategory);
+  data.device_types = (data.device_types || []).map(mapDeviceType);
+  data.devices = (data.devices || []).map(mapDevice);
 
   function updateCategorySelects() {
     const options = data.categories
@@ -247,7 +395,18 @@ function initDevices() {
     categoryTable.innerHTML = data.categories
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map((category) => `<tr><td>${category.name}</td></tr>`)
+      .map(
+        (category) => `
+          <tr data-category-id="${category.id}">
+            <td>${category.name}</td>
+            <td>
+              <div class="table-actions">
+                <button type="button" class="secondary small" data-action="edit" data-id="${category.id}">Bearbeiten</button>
+                <button type="button" class="danger small" data-action="delete" data-id="${category.id}">Löschen</button>
+              </div>
+            </td>
+          </tr>`
+      )
       .join("");
   }
 
@@ -257,19 +416,24 @@ function initDevices() {
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((product) => {
-        const components = product.components?.length
-          ? `<ul>${product.components
-              .map((comp) => `<li>${typeof comp === "string" ? comp : comp.name}</li>`)
-              .join("")}</ul>`
+        const components = product.components.length
+          ? `<ul>${product.components.map((component) => `<li>${component.name}</li>`).join("")}</ul>`
           : "—";
         const categoryName = data.categories.find((cat) => cat.id === product.category_id)?.name || "—";
         return `
-          <tr>
+          <tr data-device-type-id="${product.id}">
             <td>${product.name}</td>
             <td>${categoryName}</td>
             <td>${product.manufacturer || "—"}</td>
             <td>${product.model || "—"}</td>
             <td>${components}</td>
+            <td>
+              <div class="table-actions">
+                <button type="button" class="secondary small" data-action="edit" data-id="${product.id}">Bearbeiten</button>
+                <button type="button" class="secondary small" data-action="add-component" data-id="${product.id}">Komponente</button>
+                <button type="button" class="danger small" data-action="delete" data-id="${product.id}">Löschen</button>
+              </div>
+            </td>
           </tr>`;
       })
       .join("");
@@ -277,6 +441,7 @@ function initDevices() {
 
   function renderDeviceSelect() {
     if (!deviceTypeSelect) return;
+    const current = deviceTypeSelect.value;
     deviceTypeSelect.innerHTML = '<option value="">Bitte wählen …</option>';
     data.device_types
       .slice()
@@ -287,28 +452,91 @@ function initDevices() {
         option.textContent = product.name;
         deviceTypeSelect.appendChild(option);
       });
+    if (current) {
+      deviceTypeSelect.value = current;
+    }
   }
 
-  function renderDeviceTable(device, append = true) {
+  function renderDevices() {
     if (!deviceTable) return;
-    if (!append) {
-      deviceTable.innerHTML = "";
-      data.devices
-        .slice()
-        .sort((a, b) => a.inventory_number.localeCompare(b.inventory_number))
-        .forEach((item) => renderDeviceTable(item));
-      return;
+    deviceTable.innerHTML = "";
+    data.devices
+      .slice()
+      .sort((a, b) => a.inventory_number.localeCompare(b.inventory_number))
+      .forEach((device) => {
+        const product = data.device_types.find((item) => item.id === device.device_type_id);
+        const productName = product ? product.name : device.device_type_name || "—";
+        const categoryName = product
+          ? data.categories.find((cat) => cat.id === product.category_id)?.name || "—"
+          : data.categories.find((cat) => cat.id === device.category_id)?.name || "—";
+        const row = document.createElement("tr");
+        row.dataset.deviceId = device.id;
+        row.innerHTML = `
+          <td>${device.inventory_number}</td>
+          <td>${productName}</td>
+          <td>${categoryName}</td>
+          <td>${device.serial_number || "—"}</td>
+          <td>${device.status || "—"}</td>
+          <td>
+            <div class="table-actions">
+              <button type="button" class="secondary small" data-action="edit" data-id="${device.id}">Bearbeiten</button>
+              <button type="button" class="danger small" data-action="delete" data-id="${device.id}">Löschen</button>
+              <a class="button-link" href="/ui/devices/${device.id}">Öffnen</a>
+            </div>
+          </td>`;
+        deviceTable.appendChild(row);
+      });
+  }
+
+  function resetCategoryForm() {
+    categoryForm?.reset();
+    if (categoryIdInput) categoryIdInput.value = "";
+    if (categorySubmit) categorySubmit.textContent = "Kategorie speichern";
+    categoryCancel?.setAttribute("hidden", "hidden");
+  }
+
+  function resetDeviceTypeForm() {
+    deviceTypeForm?.reset();
+    if (deviceTypeIdInput) deviceTypeIdInput.value = "";
+    if (deviceTypeSubmit) deviceTypeSubmit.textContent = "Produkt speichern";
+    deviceTypeCancel?.setAttribute("hidden", "hidden");
+  }
+
+  function resetDeviceForm() {
+    deviceForm?.reset();
+    if (deviceIdInput) deviceIdInput.value = "";
+    inventoryInput?.removeAttribute("disabled");
+    deviceTypeSelect?.removeAttribute("disabled");
+    if (deviceSubmit) deviceSubmit.textContent = "Gerät speichern";
+    deviceCancel?.setAttribute("hidden", "hidden");
+    if (componentSerials) {
+      componentSerials.innerHTML = "";
+      componentSerials.hidden = true;
     }
-    const categoryName = data.categories.find((cat) => cat.id === device.device_type?.category_id)?.name || "—";
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${device.inventory_number}</td>
-      <td>${device.device_type?.name || "—"}</td>
-      <td>${categoryName}</td>
-      <td>${device.serial_number || "—"}</td>
-      <td>${device.status || "—"}</td>
-      <td><a class="button-link" href="/ui/devices/${device.id}">Öffnen</a></td>`;
-    deviceTable.appendChild(row);
+  }
+
+  async function refreshCategories() {
+    const refreshed = await apiFetch("/categories/");
+    data.categories = (refreshed || []).map(mapCategory);
+    renderCategories();
+    updateCategorySelects();
+    renderDeviceTypes();
+    renderDevices();
+  }
+
+  async function loadDeviceTypes() {
+    const refreshed = await apiFetch("/device-types/");
+    data.device_types = (refreshed || []).map(mapDeviceType);
+    renderDeviceTypes();
+    renderDeviceSelect();
+    deviceTypeSelect?.dispatchEvent(new Event("change"));
+    renderDevices();
+  }
+
+  async function loadDevices() {
+    const refreshed = await apiFetch("/devices/");
+    data.devices = (refreshed || []).map(mapDevice);
+    renderDevices();
   }
 
   categoryForm?.addEventListener("submit", async (event) => {
@@ -316,28 +544,67 @@ function initDevices() {
     const formData = new FormData(categoryForm);
     const name = (formData.get("name") || "").toString().trim();
     if (!name) return;
+    const editingId = categoryIdInput?.value ? Number(categoryIdInput.value) : null;
     try {
-      await apiFetch("/categories/", {
-        method: "POST",
-        body: { name },
-      });
-      data.categories = await apiFetch("/categories/");
-      renderCategories();
-      updateCategorySelects();
-      categoryForm.reset();
-      showToast("Kategorie gespeichert.", "info");
+      if (editingId) {
+        await apiFetch(`/categories/${editingId}`, {
+          method: "PATCH",
+          body: { name },
+        });
+        showToast("Kategorie aktualisiert.", "info");
+      } else {
+        await apiFetch("/categories/", {
+          method: "POST",
+          body: { name },
+        });
+        showToast("Kategorie gespeichert.", "info");
+      }
+      await refreshCategories();
+      resetCategoryForm();
     } catch (err) {
       showToast(err.message, "error");
     }
   });
 
+  categoryTable?.addEventListener("click", async (event) => {
+    const button = event.target instanceof HTMLElement ? event.target.closest("button[data-action]") : null;
+    if (!button) return;
+    const id = Number(button.dataset.id);
+    if (!id) return;
+    const category = data.categories.find((item) => item.id === id);
+    if (button.dataset.action === "edit") {
+      if (!categoryForm || !category) return;
+      if (categoryIdInput) categoryIdInput.value = String(category.id);
+      const nameInput = categoryForm.querySelector('input[name="name"]');
+      if (nameInput) nameInput.value = category.name;
+      if (categorySubmit) categorySubmit.textContent = "Kategorie aktualisieren";
+      categoryCancel?.removeAttribute("hidden");
+      nameInput?.focus();
+    } else if (button.dataset.action === "delete") {
+      if (!confirm("Kategorie wirklich löschen? Zugeordnete Produkte verlieren ihre Kategorie.")) return;
+      try {
+        await apiFetch(`/categories/${id}`, { method: "DELETE" });
+        await refreshCategories();
+        resetCategoryForm();
+        showToast("Kategorie entfernt.", "info");
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    }
+  });
+
+  categoryCancel?.addEventListener("click", () => {
+    resetCategoryForm();
+  });
+
   deviceTypeForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(deviceTypeForm);
-    const payload = {
-      name: formData.get("name"),
-      manufacturer: formData.get("manufacturer") || null,
-      model: formData.get("model") || null,
+    const editingId = deviceTypeIdInput?.value ? Number(deviceTypeIdInput.value) : null;
+    const basePayload = {
+      name: (formData.get("name") || "").toString().trim(),
+      manufacturer: (formData.get("manufacturer") || "").toString().trim() || null,
+      model: (formData.get("model") || "").toString().trim() || null,
       category_id: formData.get("category_id") ? Number(formData.get("category_id")) : null,
       default_mtk_interval_days: formData.get("default_mtk_interval_days")
         ? Number(formData.get("default_mtk_interval_days"))
@@ -346,36 +613,108 @@ function initDevices() {
         ? Number(formData.get("default_stk_interval_days"))
         : null,
       is_composite: formData.get("is_composite") === "on",
-      components: [],
     };
+    if (!basePayload.name) {
+      showToast("Bitte einen Produktnamen angeben.", "error");
+      return;
+    }
     const componentLines = (formData.get("components") || "")
       .toString()
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter(Boolean);
-    payload.components = componentLines.map((name) => ({ name }));
+      .filter(Boolean)
+      .map((name) => ({ name }));
+
     try {
-      const product = await apiFetch("/device-types/", {
-        method: "POST",
-        body: payload,
-      });
-      const refreshed = await apiFetch("/device-types/");
-      data.device_types = (refreshed || []).map((item) => ({
-        id: item.id,
-        name: item.name,
-        manufacturer: item.manufacturer,
-        model: item.model,
-        category_id: item.category?.id || null,
-        is_composite: item.is_composite,
-        components: item.components?.map((comp) => ({ id: comp.id, name: comp.name })) || [],
-      }));
-      renderDeviceTypes();
-      renderDeviceSelect();
-      deviceTypeForm.reset();
-      showToast("Produkt gespeichert.", "info");
+      if (editingId) {
+        await apiFetch(`/device-types/${editingId}`, {
+          method: "PATCH",
+          body: basePayload,
+        });
+        if (componentLines.length) {
+          await apiFetch(`/device-types/${editingId}/components`, {
+            method: "POST",
+            body: componentLines,
+          });
+        }
+        showToast("Produkt aktualisiert.", "info");
+      } else {
+        await apiFetch("/device-types/", {
+          method: "POST",
+          body: { ...basePayload, components: componentLines },
+        });
+        showToast("Produkt gespeichert.", "info");
+      }
+      await loadDeviceTypes();
+      await loadDevices();
+      resetDeviceTypeForm();
     } catch (err) {
       showToast(err.message, "error");
     }
+  });
+
+  deviceTypeTable?.addEventListener("click", async (event) => {
+    const button = event.target instanceof HTMLElement ? event.target.closest("button[data-action]") : null;
+    if (!button) return;
+    const id = Number(button.dataset.id);
+    if (!id) return;
+    const product = data.device_types.find((item) => item.id === id);
+    if (button.dataset.action === "edit") {
+      if (!deviceTypeForm || !product) return;
+      if (deviceTypeIdInput) deviceTypeIdInput.value = String(product.id);
+      const nameInput = deviceTypeForm.querySelector('input[name="name"]');
+      const manufacturerInput = deviceTypeForm.querySelector('input[name="manufacturer"]');
+      const modelInput = deviceTypeForm.querySelector('input[name="model"]');
+      const categorySelect = deviceTypeForm.querySelector('select[name="category_id"]');
+      const mtkInput = deviceTypeForm.querySelector('input[name="default_mtk_interval_days"]');
+      const stkInput = deviceTypeForm.querySelector('input[name="default_stk_interval_days"]');
+      const compositeInput = deviceTypeForm.querySelector('input[name="is_composite"]');
+      if (nameInput) nameInput.value = product.name;
+      if (manufacturerInput) manufacturerInput.value = product.manufacturer || "";
+      if (modelInput) modelInput.value = product.model || "";
+      if (categorySelect) categorySelect.value = product.category_id ? String(product.category_id) : "";
+      if (mtkInput) mtkInput.value = product.default_mtk_interval_days || "";
+      if (stkInput) stkInput.value = product.default_stk_interval_days || "";
+      if (compositeInput) compositeInput.checked = Boolean(product.is_composite);
+      const componentTextarea = deviceTypeForm.querySelector('textarea[name="components"]');
+      if (componentTextarea) componentTextarea.value = "";
+      if (deviceTypeSubmit) deviceTypeSubmit.textContent = "Produkt aktualisieren";
+      deviceTypeCancel?.removeAttribute("hidden");
+      nameInput?.focus();
+    } else if (button.dataset.action === "add-component") {
+      const input = prompt("Neue Komponente hinzufügen (mehrere Einträge mit Zeilenumbruch)");
+      if (!input) return;
+      const components = input
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((name) => ({ name }));
+      if (!components.length) return;
+      try {
+        await apiFetch(`/device-types/${id}/components`, {
+          method: "POST",
+          body: components,
+        });
+        await loadDeviceTypes();
+        showToast("Komponenten ergänzt.", "info");
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    } else if (button.dataset.action === "delete") {
+      if (!confirm("Produkt wirklich löschen? Zugeordnete Geräte verhindern das Löschen.")) return;
+      try {
+        await apiFetch(`/device-types/${id}`, { method: "DELETE" });
+        await loadDeviceTypes();
+        await loadDevices();
+        showToast("Produkt entfernt.", "info");
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    }
+  });
+
+  deviceTypeCancel?.addEventListener("click", () => {
+    resetDeviceTypeForm();
   });
 
   deviceTypeSelect?.addEventListener("change", (event) => {
@@ -383,7 +722,7 @@ function initDevices() {
     const product = data.device_types.find((item) => item.id === value);
     if (!componentSerials) return;
     componentSerials.innerHTML = "";
-    if (!product || !product.components || product.components.length === 0) {
+    if (!product || product.components.length === 0) {
       componentSerials.hidden = true;
       return;
     }
@@ -392,6 +731,7 @@ function initDevices() {
     heading.textContent = "Komponenten-Seriennummern";
     componentSerials.appendChild(heading);
     product.components.forEach((component) => {
+      if (!component.id) return;
       const wrapper = document.createElement("label");
       wrapper.textContent = component.name;
       const input = document.createElement("input");
@@ -405,16 +745,45 @@ function initDevices() {
 
   deviceForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (!deviceForm) return;
     const formData = new FormData(deviceForm);
+    const editingId = deviceIdInput?.value ? Number(deviceIdInput.value) : null;
+    if (editingId) {
+      const payload = {
+        serial_number: (formData.get("serial_number") || "").toString().trim() || null,
+        purchase_date: formData.get("purchase_date") || null,
+        status: (formData.get("status") || "").toString().trim() || null,
+        notes: (formData.get("notes") || "").toString().trim() || null,
+      };
+      try {
+        await apiFetch(`/devices/${editingId}`, {
+          method: "PATCH",
+          body: payload,
+        });
+        await loadDevices();
+        resetDeviceForm();
+        showToast("Gerät aktualisiert.", "info");
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+      return;
+    }
+
     const payload = {
       inventory_number: formData.get("inventory_number"),
       device_type_id: Number(formData.get("device_type_id")),
       serial_number: formData.get("serial_number") || null,
       purchase_date: formData.get("purchase_date") || null,
-      status: formData.get("status") || "aktiv",
+      status: (formData.get("status") || "aktiv").toString().trim() || "aktiv",
       notes: formData.get("notes") || null,
       component_serials: {},
     };
+
+    if (!payload.inventory_number || !payload.device_type_id) {
+      showToast("Bitte Inventarnummer und Produkt auswählen.", "error");
+      return;
+    }
+
     const product = data.device_types.find((item) => item.id === payload.device_type_id);
     if (product && componentSerials && !componentSerials.hidden) {
       const inputs = componentSerials.querySelectorAll("input[data-component-id]");
@@ -426,36 +795,70 @@ function initDevices() {
         }
       });
     }
+
     try {
-      const device = await apiFetch("/devices/", {
+      await apiFetch("/devices/", {
         method: "POST",
         body: payload,
       });
-      const refreshed = await apiFetch("/devices/");
-      data.devices = (refreshed || []).map((item) => ({
-        id: item.id,
-        inventory_number: item.inventory_number,
-        serial_number: item.serial_number,
-        status: item.status,
-        device_type: {
-          name: item.device_type?.name,
-          category_id: item.device_type?.category?.id || null,
-        },
-      }));
-      renderDeviceTable(null, false);
-      deviceForm.reset();
-      componentSerials && (componentSerials.hidden = true);
+      await loadDevices();
+      resetDeviceForm();
       showToast("Gerät gespeichert.", "info");
     } catch (err) {
       showToast(err.message, "error");
     }
   });
 
-  data.devices = data.devices || [];
+  deviceTable?.addEventListener("click", async (event) => {
+    const button = event.target instanceof HTMLElement ? event.target.closest("button[data-action]") : null;
+    if (!button) return;
+    const id = Number(button.dataset.id);
+    if (!id) return;
+    const device = data.devices.find((item) => item.id === id);
+    if (button.dataset.action === "edit") {
+      if (!deviceForm || !device) return;
+      if (deviceIdInput) deviceIdInput.value = String(device.id);
+      if (inventoryInput) {
+        inventoryInput.value = device.inventory_number;
+        inventoryInput.setAttribute("disabled", "disabled");
+      }
+      if (deviceTypeSelect) {
+        deviceTypeSelect.value = device.device_type_id ? String(device.device_type_id) : "";
+        deviceTypeSelect.setAttribute("disabled", "disabled");
+      }
+      if (serialInput) serialInput.value = device.serial_number || "";
+      if (purchaseInput) purchaseInput.value = device.purchase_date || "";
+      if (statusInput) statusInput.value = device.status || "aktiv";
+      if (notesInput) notesInput.value = device.notes || "";
+      if (componentSerials) {
+        componentSerials.innerHTML = "";
+        componentSerials.hidden = true;
+      }
+      if (deviceSubmit) deviceSubmit.textContent = "Gerät aktualisieren";
+      deviceCancel?.removeAttribute("hidden");
+      serialInput?.focus();
+    } else if (button.dataset.action === "delete") {
+      if (!confirm("Gerät wirklich löschen? Alle zugehörigen Einträge werden entfernt.")) return;
+      try {
+        await apiFetch(`/devices/${id}`, { method: "DELETE" });
+        await loadDevices();
+        resetDeviceForm();
+        showToast("Gerät entfernt.", "info");
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    }
+  });
+
+  deviceCancel?.addEventListener("click", () => {
+    resetDeviceForm();
+  });
+
   updateCategorySelects();
   renderCategories();
   renderDeviceTypes();
   renderDeviceSelect();
+  renderDevices();
 }
 
 function initDeviceDetail() {

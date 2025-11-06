@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models.entities import ComponentType, DeviceType
+from ..models.entities import ComponentType, Device, DeviceType
 from ..schemas.base import (
     ComponentTypeCreate,
     DeviceTypeCreate,
@@ -94,6 +94,27 @@ async def add_component_type(
     await session.commit()
     await session.refresh(device_type, attribute_names=["component_types", "category"])
     return device_type
+
+
+@router.delete("/{device_type_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_device_type(
+    device_type_id: int, session: AsyncSession = Depends(get_db_session)
+) -> None:
+    device_type = await session.get(DeviceType, device_type_id)
+    if not device_type:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device type not found")
+
+    device_count = await session.execute(
+        select(func.count()).select_from(Device).where(Device.device_type_id == device_type_id)
+    )
+    if device_count.scalar_one() > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Produkt ist noch Geräten zugeordnet und kann nicht gelöscht werden.",
+        )
+
+    await session.delete(device_type)
+    await session.commit()
 
 
 __all__ = ["router"]

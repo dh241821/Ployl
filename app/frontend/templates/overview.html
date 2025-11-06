@@ -3,12 +3,48 @@
 {% block content %}
   <section class="card">
     <div class="card-header">
+      <h2>Schnellübersicht</h2>
+      <p class="help">Aktuelle Kennzahlen über Gerätebestand, Wartungen und Reparaturen.</p>
+    </div>
+    <div class="card-body">
+      <dl class="definition-list">
+        <div>
+          <dt>Geräte gesamt</dt>
+          <dd>{{ metrics.total_devices }}</dd>
+        </div>
+        <div>
+          <dt>Davon aktiv</dt>
+          <dd>{{ metrics.active_devices }}</dd>
+        </div>
+        <div>
+          <dt>Aktive Zuordnungen</dt>
+          <dd>{{ metrics.active_assignments }}</dd>
+        </div>
+        <div>
+          <dt>Offene Reparaturen</dt>
+          <dd>{{ metrics.open_repairs }}</dd>
+        </div>
+        <div>
+          <dt>MTK fällig (30 Tage)</dt>
+          <dd>{{ metrics.mtk_due }}</dd>
+        </div>
+        <div>
+          <dt>STK fällig (30 Tage)</dt>
+          <dd>{{ metrics.stk_due }}</dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
       <h2>Funkkennungen &amp; Lager verwalten</h2>
       <p class="help">Lege neue Funkkennungen oder Lagerstandorte an, damit Geräte zugeordnet werden können.</p>
     </div>
     <div class="card-body layout-grid">
       <form id="vehicle-form" class="form-card" autocomplete="off">
         <h3>Neuer Standort</h3>
+        <input type="hidden" name="vehicle_id" />
         <label>Funkkennung oder Lager<input name="radio_id" required /></label>
         <label>
           Typ
@@ -16,7 +52,10 @@
         </label>
         <label>In Betrieb seit<input type="date" name="in_service_since" /></label>
         <label>Außer Betrieb seit<input type="date" name="out_of_service" /></label>
-        <button type="submit">Standort speichern</button>
+        <div class="action-row">
+          <button type="submit">Standort speichern</button>
+          <button type="button" class="secondary" id="vehicle-cancel" hidden>Abbrechen</button>
+        </div>
       </form>
       <div class="table-wrapper">
         <table class="data-table" id="vehicle-table">
@@ -26,6 +65,7 @@
               <th>Typ</th>
               <th>In Betrieb seit</th>
               <th>Außer Betrieb</th>
+              <th>Aktionen</th>
             </tr>
           </thead>
           <tbody>
@@ -35,6 +75,12 @@
                 <td>{{ vehicle.vehicle_type }}</td>
                 <td>{{ vehicle.in_service_since or "—" }}</td>
                 <td>{{ vehicle.out_of_service or "—" }}</td>
+                <td>
+                  <div class="table-actions">
+                    <button type="button" class="secondary small" data-action="edit" data-id="{{ vehicle.id }}">Bearbeiten</button>
+                    <button type="button" class="danger small" data-action="delete" data-id="{{ vehicle.id }}">Löschen</button>
+                  </div>
+                </td>
               </tr>
             {% endfor %}
           </tbody>
@@ -74,7 +120,7 @@
               <th>Seriennummer</th>
               <th>Status</th>
               <th>Seit</th>
-              <th>Details</th>
+              <th>Aktionen</th>
             </tr>
           </thead>
           <tbody></tbody>

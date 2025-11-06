@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.entities import DeviceCategory
-from ..schemas.base import DeviceCategoryCreate, DeviceCategoryRead
+from ..schemas.base import DeviceCategoryCreate, DeviceCategoryRead, DeviceCategoryUpdate
 from ..services.device_service import create_device_category
 from .dependencies import get_db_session
 
@@ -38,6 +38,36 @@ async def get_category(
     if not category:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
     return category
+
+
+@router.patch("/{category_id}", response_model=DeviceCategoryRead)
+async def update_category(
+    category_id: int,
+    payload: DeviceCategoryUpdate,
+    session: AsyncSession = Depends(get_db_session),
+) -> DeviceCategory:
+    category = await session.get(DeviceCategory, category_id)
+    if not category:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+
+    for field, value in payload.dict(exclude_unset=True).items():
+        setattr(category, field, value)
+
+    await session.commit()
+    await session.refresh(category)
+    return category
+
+
+@router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_category(
+    category_id: int, session: AsyncSession = Depends(get_db_session)
+) -> None:
+    category = await session.get(DeviceCategory, category_id)
+    if not category:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+
+    await session.delete(category)
+    await session.commit()
 
 
 __all__ = ["router"]
