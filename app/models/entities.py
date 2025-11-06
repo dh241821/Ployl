@@ -30,11 +30,20 @@ class Vehicle(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     radio_id: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     vehicle_type: Mapped[str] = mapped_column(String(16), nullable=False)
-    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    name: Mapped[Optional[str]] = mapped_column(String(128))
     in_service_since: Mapped[Optional[date]] = mapped_column(Date())
     out_of_service: Mapped[Optional[date]] = mapped_column(Date())
 
     assignments: Mapped[list["DeviceAssignment"]] = relationship(back_populates="vehicle")
+
+
+class DeviceCategory(Base):
+    __tablename__ = "device_category"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+
+    device_types: Mapped[list["DeviceType"]] = relationship(back_populates="category")
 
 
 class DeviceType(Base):
@@ -42,11 +51,16 @@ class DeviceType(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    category_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("device_category.id", ondelete="SET NULL"), nullable=True
+    )
     manufacturer: Mapped[Optional[str]] = mapped_column(String(128))
     model: Mapped[Optional[str]] = mapped_column(String(128))
     default_mtk_interval_days: Mapped[Optional[int]] = mapped_column(Integer)
     default_stk_interval_days: Mapped[Optional[int]] = mapped_column(Integer)
     is_composite: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    category: Mapped[Optional[DeviceCategory]] = relationship(back_populates="device_types")
 
     component_types: Mapped[list["ComponentType"]] = relationship(
         back_populates="device_type", cascade="all, delete-orphan"
@@ -268,6 +282,7 @@ def mark_device_active(mapper, connection, target: RepairLog) -> None:
 
 __all__ = [
     "Vehicle",
+    "DeviceCategory",
     "DeviceType",
     "ComponentType",
     "Device",

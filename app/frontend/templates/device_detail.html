@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+{% block content %}
+  <section class="card">
+    <div class="card-header">
+      <h2>Geräteinformation</h2>
+    </div>
+    <div class="card-body">
+      <dl class="definition-list">
+        <div><dt>Inventarnummer</dt><dd>{{ device.inventory_number }}</dd></div>
+        <div><dt>Produkt</dt><dd>{{ device.device_type.name }}</dd></div>
+        <div><dt>Kategorie</dt><dd>{{ device.device_type.category.name if device.device_type.category else "—" }}</dd></div>
+        <div><dt>Seriennummer</dt><dd>{{ device.serial_number or "—" }}</dd></div>
+        <div><dt>Status</dt><dd id="device-status">{{ device.status }}</dd></div>
+        <div><dt>Kaufdatum</dt><dd>{{ device.purchase_date or "—" }}</dd></div>
+        <div><dt>Notizen</dt><dd>{{ device.notes or "—" }}</dd></div>
+      </dl>
+      {% if device.components %}
+        <h3>Komponenten</h3>
+        <ul>
+          {% for component in device.components %}
+            <li>{{ component.component_type.name }}{% if component.serial_number %} – SN {{ component.serial_number }}{% endif %}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Zuordnung</h2>
+    </div>
+    <div class="card-body layout-grid">
+      <form id="assignment-form" class="form-card">
+        <h3>Funkkennung/Lager zuordnen</h3>
+        <input type="hidden" name="device_id" value="{{ device.id }}" />
+        <label>
+          Standort
+          <select name="vehicle_id" id="assignment-vehicle" required>
+            <option value="">Bitte wählen …</option>
+            {% for vehicle in vehicles %}
+              <option value="{{ vehicle.id }}">{{ vehicle.radio_id }} – {{ vehicle.vehicle_type }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Verantwortlich<input name="assigned_by" /></label>
+        <label>Notizen<textarea name="notes" rows="2"></textarea></label>
+        <button type="submit">Zuordnen</button>
+      </form>
+      <div class="table-wrapper">
+        <table class="data-table" id="assignment-table">
+          <thead>
+            <tr>
+              <th>Standort</th>
+              <th>Von</th>
+              <th>Bis</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for assignment in assignments %}
+              <tr>
+                <td>{{ assignment.vehicle.radio_id if assignment.vehicle else "—" }}</td>
+                <td>{{ assignment.assigned_from }}</td>
+                <td>{{ assignment.assigned_to or "aktiv" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Prüfungen (MTK/STK)</h2>
+    </div>
+    <div class="card-body layout-grid">
+      <form id="check-form" class="form-card">
+        <h3>Neue Prüfung erfassen</h3>
+        <input type="hidden" name="device_id" value="{{ device.id }}" />
+        <label>
+          Prüfart
+          <select name="check_type" required>
+            <option value="">Bitte wählen …</option>
+            <option value="MTK">MTK</option>
+            <option value="STK">STK</option>
+          </select>
+        </label>
+        <label>Datum<input type="date" name="performed_on" required /></label>
+        <label>Fällig am<input type="date" name="due_on" /></label>
+        <label>Durchgeführt von<input name="performed_by" /></label>
+        <label>Ergebnis<input name="result" /></label>
+        <label>Notizen<textarea name="notes" rows="3"></textarea></label>
+        <button type="submit">Prüfung speichern</button>
+      </form>
+      <div class="table-wrapper">
+        <table class="data-table" id="check-table">
+          <thead>
+            <tr>
+              <th>Prüfung</th>
+              <th>Datum</th>
+              <th>Fällig</th>
+              <th>Ergebnis</th>
+              <th>Dokumente</th>
+              <th>Upload</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for check in checks %}
+              <tr>
+                <td>{{ check.check_type }}</td>
+                <td>{{ check.performed_on }}</td>
+                <td>{{ check.due_on or "—" }}</td>
+                <td>{{ check.result or "—" }}</td>
+                <td>
+                  {% if check.attachments %}
+                    <ul>
+                      {% for attachment in check.attachments %}
+                        <li><a href="/uploads/{{ attachment.file_path }}" target="_blank">{{ attachment.description or attachment.file_path }}</a></li>
+                      {% endfor %}
+                    </ul>
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+                <td>
+                  <form class="upload-form" data-check-id="{{ check.id }}">
+                    <label class="sr-only" for="check-file-{{ check.id }}">Dokument</label>
+                    <input type="file" id="check-file-{{ check.id }}" name="file" accept="application/pdf" required />
+                    <input type="text" name="description" placeholder="Beschreibung" />
+                    <button type="submit">Upload</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Reparaturen</h2>
+    </div>
+    <div class="card-body layout-grid">
+      <form id="repair-form" class="form-card">
+        <h3>Reparatur erfassen</h3>
+        <input type="hidden" name="device_id" value="{{ device.id }}" />
+        <label>Gemeldet am<input type="date" name="reported_on" required /></label>
+        <label>Repariert am<input type="date" name="repaired_on" /></label>
+        <label>Fehlerbeschreibung<textarea name="reported_issue" rows="2" required></textarea></label>
+        <label>Maßnahme<textarea name="repair_action" rows="2"></textarea></label>
+        <label>Durchgeführt von<input name="repaired_by" /></label>
+        <label>Kosten (€)<input type="number" step="0.01" min="0" name="cost" /></label>
+        <label>Notizen<textarea name="notes" rows="2"></textarea></label>
+        <button type="submit">Reparatur speichern</button>
+      </form>
+      <div class="table-wrapper">
+        <table class="data-table" id="repair-table">
+          <thead>
+            <tr>
+              <th>Gemeldet</th>
+              <th>Erledigt</th>
+              <th>Fehler</th>
+              <th>Maßnahme</th>
+              <th>Dokumente</th>
+              <th>Upload</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for repair in repairs %}
+              <tr data-repair-id="{{ repair.id }}">
+                <td>{{ repair.reported_on }}</td>
+                <td>{{ repair.repaired_on or "offen" }}</td>
+                <td>{{ repair.reported_issue }}</td>
+                <td>{{ repair.repair_action or "—" }}</td>
+                <td>
+                  {% if repair.attachments %}
+                    <ul>
+                      {% for attachment in repair.attachments %}
+                        <li><a href="/uploads/{{ attachment.file_path }}" target="_blank">{{ attachment.description or attachment.file_path }}</a></li>
+                      {% endfor %}
+                    </ul>
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+                <td>
+                  <form class="upload-form" data-repair-id="{{ repair.id }}">
+                    <label class="sr-only" for="repair-file-{{ repair.id }}">Dokument</label>
+                    <input type="file" id="repair-file-{{ repair.id }}" name="file" accept="application/pdf" required />
+                    <input type="text" name="description" placeholder="Beschreibung" />
+                    <button type="submit">Upload</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <script type="application/json" id="device-detail-data">
+    {{ {
+      "device": {
+        "id": device.id,
+        "inventory_number": device.inventory_number,
+        "status": device.status,
+        "serial_number": device.serial_number,
+        "device_type": {
+          "name": device.device_type.name,
+          "category": device.device_type.category.name if device.device_type.category else None,
+        },
+      },
+      "assignments": [
+        {
+          "id": assignment.id,
+          "vehicle_id": assignment.vehicle_id,
+          "vehicle": assignment.vehicle.radio_id if assignment.vehicle else None,
+          "assigned_from": assignment.assigned_from.isoformat() if assignment.assigned_from else None,
+          "assigned_to": assignment.assigned_to.isoformat() if assignment.assigned_to else None,
+        }
+        for assignment in assignments
+      ],
+      "checks": [
+        {
+          "id": check.id,
+          "check_type": check.check_type,
+          "performed_on": check.performed_on.isoformat(),
+          "due_on": check.due_on.isoformat() if check.due_on else None,
+          "result": check.result,
+          "attachments": [
+            {
+              "id": attachment.id,
+              "file_path": attachment.file_path,
+              "description": attachment.description,
+            }
+            for attachment in check.attachments
+          ],
+        }
+        for check in checks
+      ],
+      "repairs": [
+        {
+          "id": repair.id,
+          "reported_on": repair.reported_on.isoformat(),
+          "repaired_on": repair.repaired_on.isoformat() if repair.repaired_on else None,
+          "reported_issue": repair.reported_issue,
+          "repair_action": repair.repair_action,
+          "attachments": [
+            {
+              "id": attachment.id,
+              "file_path": attachment.file_path,
+              "description": attachment.description,
+            }
+            for attachment in repair.attachments
+          ],
+        }
+        for repair in repairs
+      ],
+      "vehicles": [
+        {
+          "id": vehicle.id,
+          "radio_id": vehicle.radio_id,
+          "vehicle_type": vehicle.vehicle_type,
+        }
+        for vehicle in vehicles
+      ],
+    } | tojson }}
+  </script>
+{% endblock %}

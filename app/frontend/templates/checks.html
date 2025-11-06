@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+  <section class="card">
+    <div class="card-header">
+      <h2>{{ check_type }} Kontrollen</h2>
+      <p class="help">Alle aufgezeichneten {{ check_type }}-Kontrollen mit Zugriff auf die hochgeladenen Dokumente.</p>
+    </div>
+    <div class="card-body">
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Gerät</th>
+              <th>Datum</th>
+              <th>Fällig</th>
+              <th>Ergebnis</th>
+              <th>Dokumente</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for check in checks %}
+              <tr>
+                <td><a href="/devices/{{ check.device_id }}">Gerät #{{ check.device_id }}</a></td>
+                <td>{{ check.performed_on }}</td>
+                <td>{{ check.due_on or "—" }}</td>
+                <td>{{ check.result or "—" }}</td>
+                <td>
+                  {% if check.attachments %}
+                    <ul>
+                      {% for attachment in check.attachments %}
+                        <li><a href="/uploads/{{ attachment.file_path }}" target="_blank">{{ attachment.description or attachment.file_path }}</a></li>
+                      {% endfor %}
+                    </ul>
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="5">Keine Kontrollen vorhanden.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+{% endblock %}

@@ -5,6 +5,7 @@ from typing import Optional
 
 from sqlalchemy import Select, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from ..core.config import get_settings
 from ..models.entities import (
@@ -12,14 +13,17 @@ from ..models.entities import (
     ComponentType,
     Device,
     DeviceAssignment,
+    DeviceCategory,
     DeviceComponent,
     DeviceType,
     MaintenanceAlert,
     RepairLog,
     SafetyCheck,
+    Vehicle,
 )
 from ..schemas.base import (
     AssignmentCreate,
+    DeviceCategoryCreate,
     DeviceCreate,
     DeviceTypeCreate,
     MaintenanceWindow,
@@ -32,10 +36,22 @@ from ..schemas.base import (
 
 
 async def create_vehicle(session: AsyncSession, payload: VehicleCreate) -> Vehicle:
-    vehicle = Vehicle(**payload.dict())
+    data = payload.dict()
+    if not data.get("name"):
+        data["name"] = data["radio_id"]
+    vehicle = Vehicle(**data)
     session.add(vehicle)
     await session.flush()
     return vehicle
+
+
+async def create_device_category(
+    session: AsyncSession, payload: DeviceCategoryCreate
+) -> DeviceCategory:
+    category = DeviceCategory(**payload.dict())
+    session.add(category)
+    await session.flush()
+    return category
 
 
 async def create_device_type(
@@ -48,6 +64,7 @@ async def create_device_type(
         default_mtk_interval_days=payload.default_mtk_interval_days,
         default_stk_interval_days=payload.default_stk_interval_days,
         is_composite=payload.is_composite,
+        category_id=payload.category_id,
     )
     for component in payload.components:
         device_type.component_types.append(ComponentType(name=component.name))
@@ -174,6 +191,25 @@ async def update_repair_log(
     return repair
 
 
+async def get_repairs_filtered(
+    session: AsyncSession,
+    category_id: Optional[int] = None,
+    serial_number: Optional[str] = None,
+) -> list[RepairLog]:
+    stmt = (
+        select(RepairLog)
+        .join(Device, RepairLog.device_id == Device.id)
+        .join(DeviceType, Device.device_type_id == DeviceType.id)
+    )
+    if category_id:
+        stmt = stmt.where(DeviceType.category_id == category_id)
+    if serial_number:
+        stmt = stmt.where(Device.serial_number == serial_number)
+    stmt = stmt.order_by(RepairLog.reported_on.desc())
+    rows = await session.execute(stmt)
+    return list(rows.scalars().unique())
+
+
 async def get_upcoming_maintenance(
     session: AsyncSession,
     days: Optional[int] = None,
@@ -287,19 +323,22 @@ async def get_active_assignments(session: AsyncSession, vehicle_id: Optional[int
 
 async def get_device_history(session: AsyncSession, device_id: int) -> dict[str, list]:
     assignments = await session.execute(
-        select(DeviceAssignment).where(DeviceAssignment.device_id == device_id).order_by(
-            DeviceAssignment.assigned_from.desc()
-        )
+        select(DeviceAssignment)
+        .where(DeviceAssignment.device_id == device_id)
+        .order_by(DeviceAssignment.assigned_from.desc())
+        .options(selectinload(DeviceAssignment.vehicle))
     )
     checks = await session.execute(
-        select(SafetyCheck).where(SafetyCheck.device_id == device_id).order_by(
-            SafetyCheck.performed_on.desc()
-        )
+        select(SafetyCheck)
+        .where(SafetyCheck.device_id == device_id)
+        .order_by(SafetyCheck.performed_on.desc())
+        .options(selectinload(SafetyCheck.attachments))
     )
     repairs = await session.execute(
-        select(RepairLog).where(RepairLog.device_id == device_id).order_by(
-            RepairLog.reported_on.desc()
-        )
+        select(RepairLog)
+        .where(RepairLog.device_id == device_id)
+        .order_by(RepairLog.reported_on.desc())
+        .options(selectinload(RepairLog.attachments))
     )
     return {
         "assignments": list(assignments.scalars()),
@@ -369,12 +408,14 @@ async def _resolve_alerts_for_check(
 
 __all__ = [
     "create_vehicle",
+    "create_device_category",
     "create_device_type",
     "create_device",
     "assign_device",
     "create_safety_check",
     "create_repair_log",
     "update_repair_log",
+    "get_repairs_filtered",
     "get_upcoming_maintenance",
     "sync_maintenance_alerts",
     "get_active_assignments",

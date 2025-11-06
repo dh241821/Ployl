@@ -10,7 +10,12 @@ from rich.table import Table
 
 from .core.config import get_settings
 from .database import AsyncSessionFactory, engine
-from .services.device_service import get_alerts, get_upcoming_maintenance
+from .services.device_service import (
+    create_device_category,
+    create_device_type,
+    get_alerts,
+    get_upcoming_maintenance,
+)
 from .utils.migrations import run_migrations
 
 app = typer.Typer(help="Management commands for the Ployl backend")
@@ -107,6 +112,69 @@ def settings() -> None:
     for field, value in cfg.dict().items():
         table.add_row(field, str(value))
     console.print(table)
+
+
+@app.command()
+def seed_products() -> None:
+    """Seed standardkategorien und Medizinprodukte."""
+
+    defaults = {
+        "Fahrtrage": [
+            {"name": "Stryker M1"},
+            {"name": "Ferno Monaldy"},
+        ],
+        "Tragstuhl": [
+            {"name": "Dlouhy"},
+        ],
+        "CO-Warner": [
+            {"name": "Dräger PAC 5500"},
+            {"name": "Dräger PAC 65000"},
+        ],
+        "Corpuls": [
+            {
+                "name": "Corpuls 3",
+                "components": [
+                    {"name": "Patientenmodul"},
+                    {"name": "Therapiemodul"},
+                    {"name": "Monitormodul"},
+                ],
+            }
+        ],
+    }
+
+    async def _seed() -> None:
+        async with AsyncSessionFactory() as session:
+            for category_name, products in defaults.items():
+                category = await session.execute(
+                    select(DeviceCategory).where(DeviceCategory.name == category_name)
+                )
+                category_obj = category.scalar_one_or_none()
+                if not category_obj:
+                    category_obj = await create_device_category(
+                        session, DeviceCategoryCreate(name=category_name)
+                    )
+                    await session.flush()
+
+                for product in products:
+                    product_stmt = await session.execute(
+                        select(DeviceType).where(DeviceType.name == product["name"])
+                    )
+                    if product_stmt.scalar_one_or_none():
+                        continue
+                    payload = DeviceTypeCreate(
+                        name=product["name"],
+                        category_id=category_obj.id,
+                        components=[ComponentTypeCreate(**comp) for comp in product.get("components", [])],
+                    )
+                    await create_device_type(session, payload)
+            await session.commit()
+
+    from sqlalchemy import select  # local import to avoid circular dependency
+    from .models.entities import DeviceCategory, DeviceType
+    from .schemas.base import ComponentTypeCreate, DeviceCategoryCreate, DeviceTypeCreate
+
+    asyncio.run(_seed())
+    console.print("[green]Standardprodukte angelegt (falls nicht vorhanden).[/green]")
 
 
 def main() -> None:

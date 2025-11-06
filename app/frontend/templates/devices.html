@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block content %}
+  <section class="card">
+    <div class="card-header">
+      <h2>Kategorien verwalten</h2>
+    </div>
+    <div class="card-body layout-grid">
+      <form id="category-form" class="form-card" autocomplete="off">
+        <h3>Neue Kategorie</h3>
+        <label>Name<input name="name" required /></label>
+        <button type="submit">Kategorie anlegen</button>
+      </form>
+      <div class="table-wrapper">
+        <table class="data-table" id="category-table">
+          <thead>
+            <tr><th>Name</th></tr>
+          </thead>
+          <tbody>
+            {% for category in categories %}
+              <tr><td>{{ category.name }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Produkte</h2>
+      <p class="help">Lege neue Medizinprodukte inklusive Komponenten und Zuordnung zur Kategorie an.</p>
+    </div>
+    <div class="card-body layout-grid">
+      <form id="device-type-form" class="form-card" autocomplete="off">
+        <h3>Neues Produkt</h3>
+        <label>Name<input name="name" required /></label>
+        <label>Hersteller<input name="manufacturer" /></label>
+        <label>Modell<input name="model" /></label>
+        <label>
+          Kategorie
+          <select name="category_id" id="product-category-select">
+            <option value="">Keine</option>
+            {% for category in categories %}
+              <option value="{{ category.id }}">{{ category.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>MTK-Intervall (Tage)<input type="number" min="1" name="default_mtk_interval_days" /></label>
+        <label>STK-Intervall (Tage)<input type="number" min="1" name="default_stk_interval_days" /></label>
+        <label class="checkbox"><input type="checkbox" name="is_composite" /> Verbundgerät</label>
+        <label>Komponenten (eine pro Zeile)<textarea name="components" rows="3" placeholder="z. B. Patientenmodul&#10;Therapiemodul&#10;Monitormodul"></textarea></label>
+        <button type="submit">Produkt speichern</button>
+      </form>
+      <div class="table-wrapper">
+        <table class="data-table" id="device-type-table">
+          <thead>
+            <tr>
+              <th>Produkt</th>
+              <th>Kategorie</th>
+              <th>Hersteller</th>
+              <th>Modell</th>
+              <th>Komponenten</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for product in device_types %}
+              <tr>
+                <td>{{ product.name }}</td>
+                <td>{{ product.category.name if product.category else "—" }}</td>
+                <td>{{ product.manufacturer or "—" }}</td>
+                <td>{{ product.model or "—" }}</td>
+                <td>
+                  {% if product.components %}
+                    <ul>
+                      {% for component in product.components %}
+                        <li>{{ component.name }}</li>
+                      {% endfor %}
+                    </ul>
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Geräte</h2>
+    </div>
+    <div class="card-body layout-grid">
+      <form id="device-form" class="form-card" autocomplete="off">
+        <h3>Gerät hinzufügen</h3>
+        <label>Inventarnummer<input name="inventory_number" required /></label>
+        <label>
+          Produkt
+          <select name="device_type_id" id="device-type-select" required>
+            <option value="">Bitte wählen …</option>
+            {% for product in device_types %}
+              <option value="{{ product.id }}">{{ product.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Seriennummer<input name="serial_number" /></label>
+        <label>Kaufdatum<input type="date" name="purchase_date" /></label>
+        <label>Status<input name="status" value="aktiv" /></label>
+        <label>Notizen<textarea name="notes" rows="3"></textarea></label>
+        <div id="component-serials" class="form-fieldset" hidden>
+          <h4>Komponenten-Seriennummern</h4>
+        </div>
+        <button type="submit">Gerät speichern</button>
+      </form>
+      <div class="table-wrapper">
+        <table class="data-table" id="device-table">
+          <thead>
+            <tr>
+              <th>Inventarnummer</th>
+              <th>Produkt</th>
+              <th>Kategorie</th>
+              <th>Seriennummer</th>
+              <th>Status</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for device in devices %}
+              <tr>
+                <td>{{ device.inventory_number }}</td>
+                <td>{{ device.device_type.name }}</td>
+                <td>{{ device.device_type.category.name if device.device_type.category else "—" }}</td>
+                <td>{{ device.serial_number or "—" }}</td>
+                <td>{{ device.status }}</td>
+                <td><a class="button-link" href="/devices/{{ device.id }}">Öffnen</a></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <script type="application/json" id="devices-data">
+    {{ {
+      "categories": [
+        {"id": category.id, "name": category.name}
+        for category in categories
+      ],
+      "device_types": [
+        {
+          "id": product.id,
+          "name": product.name,
+          "manufacturer": product.manufacturer,
+          "model": product.model,
+          "category_id": product.category.id if product.category else None,
+          "is_composite": product.is_composite,
+          "components": [
+            {"id": component.id, "name": component.name}
+            for component in product.components
+          ],
+        }
+        for product in device_types
+      ],
+    } | tojson }}
+  </script>
+{% endblock %}

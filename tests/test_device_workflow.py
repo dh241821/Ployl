@@ -18,6 +18,11 @@ async def test_full_device_workflow(client):
     assert vehicle_resp.status_code == 201, vehicle_resp.text
     vehicle_id = vehicle_resp.json()["id"]
 
+    # Create category
+    category_resp = await client.post("/categories/", json={"name": "Monitoring"})
+    assert category_resp.status_code == 201, category_resp.text
+    category_id = category_resp.json()["id"]
+
     # Create device type with components
     device_type_payload = {
         "name": "Corpuls 3",
@@ -26,6 +31,7 @@ async def test_full_device_workflow(client):
         "default_mtk_interval_days": 7,
         "default_stk_interval_days": 14,
         "is_composite": True,
+        "category_id": category_id,
         "components": [
             {"name": "Patientenmodul"},
             {"name": "Monitoreinheit"},
@@ -35,6 +41,7 @@ async def test_full_device_workflow(client):
     device_type_resp = await client.post("/device-types/", json=device_type_payload)
     assert device_type_resp.status_code == 201, device_type_resp.text
     device_type_id = device_type_resp.json()["id"]
+    assert device_type_resp.json()["category"]["name"] == "Monitoring"
 
     components = device_type_resp.json()["components"]
     component_serials = {str(component["id"]): f"SERIAL-{component['name']}" for component in components}
@@ -86,6 +93,13 @@ async def test_full_device_workflow(client):
     assert repair_resp.status_code == 201, repair_resp.text
     repair_id = repair_resp.json()["id"]
 
+    # Repair filter by category
+    filtered_repairs = await client.get(
+        "/repairs/", params={"category_id": category_id}
+    )
+    assert filtered_repairs.status_code == 200
+    assert any(row["id"] == repair_id for row in filtered_repairs.json())
+
     device_after_repair = await client.get(f"/devices/{device_id}")
     assert device_after_repair.status_code == 200
     assert device_after_repair.json()["status"] == "in_wartung"
@@ -123,6 +137,10 @@ async def test_full_device_workflow(client):
     }
     new_check_resp = await client.post("/checks/", json=new_check_payload)
     assert new_check_resp.status_code == 201, new_check_resp.text
+
+    checks_for_device = await client.get("/checks/", params={"device_id": device_id})
+    assert checks_for_device.status_code == 200
+    assert len(checks_for_device.json()) >= 2
 
     await maintenance_job()
 

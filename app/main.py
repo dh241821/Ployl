@@ -6,7 +6,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from .api import assignments, checks, device_types, devices, maintenance, repairs, vehicles
+from .api import (
+    assignments,
+    categories,
+    checks,
+    device_types,
+    devices,
+    maintenance,
+    repairs,
+    vehicles,
+)
 from .core.config import get_settings
 from .database import AsyncSessionFactory, engine
 from .frontend import STATIC_DIR, router as frontend_router
@@ -42,12 +51,18 @@ def create_app() -> FastAPI:
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
     app.include_router(vehicles.router)
+    app.include_router(categories.router)
     app.include_router(device_types.router)
     app.include_router(devices.router)
     app.include_router(assignments.router)
     app.include_router(checks.router)
     app.include_router(repairs.router)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    app.mount(
+        "/uploads",
+        StaticFiles(directory=str(settings.upload_dir), html=False),
+        name="uploads",
+    )
 
     app.include_router(maintenance.router)
     app.include_router(frontend_router)

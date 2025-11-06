@@ -6,6 +6,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal, cast
 
+import os
+
 
 ENV_FILE = Path.cwd() / ".env"
 
@@ -74,6 +76,7 @@ class Settings:
     run_migrations_on_startup: bool
     scheduler_timezone: str
     maintenance_due_window_days: int
+    upload_dir: Path
 
     @classmethod
     def load(cls) -> "Settings":
@@ -83,6 +86,9 @@ class Settings:
         environment = env.get("ENVIRONMENT", "development").lower()
         if environment not in {"development", "testing", "production"}:
             environment = "development"
+
+        upload_root = Path(env.get("UPLOAD_DIR", Path.cwd() / "uploads")).resolve()
+        upload_root.mkdir(parents=True, exist_ok=True)
 
         return cls(
             app_name=env.get("APP_NAME", "Ployl Medical Device Manager"),
@@ -95,6 +101,7 @@ class Settings:
             maintenance_due_window_days=_coerce_int(
                 env.get("MAINTENANCE_DUE_WINDOW_DAYS"), 30
             ),
+            upload_dir=upload_root,
         )
 
 

@@ -13,7 +13,7 @@ class ORMBase(BaseModel):
 class VehicleBase(BaseModel):
     radio_id: str
     vehicle_type: str
-    name: str
+    name: Optional[str] = None
     in_service_since: Optional[date] = None
     out_of_service: Optional[date] = None
 
@@ -28,6 +28,18 @@ class VehicleUpdate(BaseModel):
     name: Optional[str] = None
     in_service_since: Optional[date] = None
     out_of_service: Optional[date] = None
+
+
+class DeviceCategoryBase(BaseModel):
+    name: str
+
+
+class DeviceCategoryCreate(DeviceCategoryBase):
+    pass
+
+
+class DeviceCategoryRead(ORMBase, DeviceCategoryBase):
+    id: int
 
 
 class VehicleRead(ORMBase, VehicleBase):
@@ -47,6 +59,7 @@ class DeviceTypeBase(BaseModel):
     name: str
     manufacturer: Optional[str] = None
     model: Optional[str] = None
+    category_id: Optional[int] = None
     default_mtk_interval_days: Optional[int] = Field(default=None, ge=1)
     default_stk_interval_days: Optional[int] = Field(default=None, ge=1)
     is_composite: bool = False
@@ -59,6 +72,7 @@ class DeviceTypeCreate(DeviceTypeBase):
 class DeviceTypeUpdate(BaseModel):
     manufacturer: Optional[str] = None
     model: Optional[str] = None
+    category_id: Optional[int] = None
     default_mtk_interval_days: Optional[int] = Field(default=None, ge=1)
     default_stk_interval_days: Optional[int] = Field(default=None, ge=1)
     is_composite: Optional[bool] = None
@@ -66,6 +80,7 @@ class DeviceTypeUpdate(BaseModel):
 
 class DeviceTypeRead(ORMBase, DeviceTypeBase):
     id: int
+    category: Optional[DeviceCategoryRead] = None
     components: list[ComponentTypeRead] = Field(default_factory=list)
 
 

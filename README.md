@@ -7,12 +7,12 @@ sämtliche im Auftrag genannten Anforderungen sowie zusätzliche Automatisierung
 ## Features
 
 - Verwaltung von Fahrzeugen inklusive Funkkennung
-- Verwaltung von Gerätetypen (inkl. Verbundgeräte wie Trage oder Corpuls) und deren
-  Komponenten
+- Verwaltung von Kategorien und Gerätetypen (inkl. Verbundgeräte wie Trage oder Corpuls)
+  samt Komponentenverwaltung
 - Anlage konkreter Geräte samt Komponenten-Seriennummern
 - Historie der Fahrzeugzuordnungen mit automatischem Schließen vorheriger Zuordnungen
-- Dokumentation von MTK- und STK-Prüfungen inkl. PDF-Belegen
-- Reparaturlog mit Dokumentenanhang
+- Dokumentation von MTK- und STK-Prüfungen inkl. PDF-Upload (separate Übersichtsseiten)
+- Reparaturlog mit Filtern (Kategorie → Seriennummer) und Dokumentenanhang
 - Vollständige Gerätehistorie (Zuordnungen, Prüfungen, Reparaturen)
 - Wartungsübersicht mit Berechnung bevorstehender MTK/STK Fälligkeiten
 - Automatischer Hintergrundjob (APScheduler) zur Benachrichtigung über fällige Checks
@@ -20,8 +20,8 @@ sämtliche im Auftrag genannten Anforderungen sowie zusätzliche Automatisierung
 - Verwaltung von Wartungswarnungen (Acknowledgement/Resolve) über API und CLI
 - Automatische Statusumschaltung von Geräten bei offenen bzw. abgeschlossenen Reparaturen
 - Typer-CLI für Migrationen, Konfigurationsübersicht und Wartungsreport
-- Moderne Weboberfläche zur Pflege aller Datenpunkte (Geräte, Fahrzeuge, Prüfungen,
-  Reparaturen, Wartungswarnungen)
+- Moderne Weboberfläche mit dedizierten Seiten für Standorte (Funkkennung/Lager), Geräte,
+  Reparaturlog sowie getrennte STK- und MTK-Übersichten
 
 ## Schnellstart
 
@@ -54,9 +54,14 @@ sämtliche im Auftrag genannten Anforderungen sowie zusätzliche Automatisierung
    ```
 
 Die API ist anschließend unter `http://localhost:8000` erreichbar. Die grafische Oberfläche
-steht direkt unter `http://localhost:8000/` zur Verfügung und bietet Formulare zum Anlegen
-und Pflegen sämtlicher Stammdaten, Zuordnungen, Prüfungen und Reparaturmeldungen. Die
-OpenAPI-Dokumentation findet sich weiterhin unter `http://localhost:8000/docs`.
+steht direkt unter `http://localhost:8000/` zur Verfügung und bietet:
+
+- Standortübersicht mit Auswahl nach Funkkennung/Lager und verlinkten Geräten
+- Pflegeoberfläche für Kategorien, Produkte (inkl. Komponenten) und Geräte
+- Detailseiten je Gerät mit Zuordnung, Prüfungs- und Reparaturformularen sowie PDF-Uploads
+- Separate STK-/MTK-Listen und ein filterbares Reparaturlog
+
+Die OpenAPI-Dokumentation findet sich weiterhin unter `http://localhost:8000/docs`.
 
 ## Tests
 
@@ -76,10 +81,11 @@ pytest
 ## CLI-Befehle
 
 ```bash
-python -m app.cli migrate   # Schema erstellen
-python -m app.cli upcoming  # Fällige MTK/STK Checks anzeigen
-python -m app.cli alerts    # Persistente Wartungswarnungen anzeigen
-python -m app.cli settings  # Effektive Konfiguration ausgeben
+python -m app.cli migrate        # Schema erstellen
+python -m app.cli upcoming       # Fällige MTK/STK Checks anzeigen
+python -m app.cli alerts         # Persistente Wartungswarnungen anzeigen
+python -m app.cli settings       # Effektive Konfiguration ausgeben
+python -m app.cli seed-products  # Standardkategorien und Geräte (Tragen, Corpuls, CO-Warner) anlegen
 ```
 
 ## Datenmodell

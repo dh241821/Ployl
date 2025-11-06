@@ -45,7 +45,13 @@ async def update_vehicle(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
 
     for field, value in payload.dict(exclude_unset=True).items():
-        setattr(vehicle, field, value)
+        if field == "name" and (value is None or value == ""):
+            setattr(vehicle, field, vehicle.radio_id)
+        else:
+            setattr(vehicle, field, value)
+
+    if not vehicle.name:
+        vehicle.name = vehicle.radio_id
 
     await session.commit()
     await session.refresh(vehicle)
