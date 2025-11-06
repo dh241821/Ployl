@@ -134,7 +134,7 @@
                 <td>{{ device.device_type.category.name if device.device_type.category else "—" }}</td>
                 <td>{{ device.serial_number or "—" }}</td>
                 <td>{{ device.status }}</td>
-                <td><a class="button-link" href="/devices/{{ device.id }}">Öffnen</a></td>
+                <td><a class="button-link" href="/ui/devices/{{ device.id }}">Öffnen</a></td>
               </tr>
             {% endfor %}
           </tbody>

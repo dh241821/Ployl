@@ -123,7 +123,7 @@ async def overview(request: Request) -> HTMLResponse:
     )
 
 
-@router.get("/devices", response_class=HTMLResponse)
+@router.get("/ui/devices", response_class=HTMLResponse)
 async def devices_page(request: Request) -> HTMLResponse:
     async with AsyncSessionFactory() as session:
         categories = list(
@@ -178,7 +178,7 @@ async def devices_page(request: Request) -> HTMLResponse:
     )
 
 
-@router.get("/devices/{device_id}", response_class=HTMLResponse)
+@router.get("/ui/devices/{device_id}", response_class=HTMLResponse)
 async def device_detail(request: Request, device_id: int) -> HTMLResponse:
     async with AsyncSessionFactory() as session:
         device = await session.get(
@@ -326,7 +326,7 @@ async def device_detail(request: Request, device_id: int) -> HTMLResponse:
     )
 
 
-@router.get("/repairs", response_class=HTMLResponse)
+@router.get("/ui/repairs", response_class=HTMLResponse)
 async def repairs_page(request: Request) -> HTMLResponse:
     async with AsyncSessionFactory() as session:
         categories = list(
@@ -369,7 +369,7 @@ async def repairs_page(request: Request) -> HTMLResponse:
     )
 
 
-@router.get("/checks/{check_type}", response_class=HTMLResponse)
+@router.get("/ui/checks/{check_type}", response_class=HTMLResponse)
 async def checks_page(request: Request, check_type: str) -> HTMLResponse:
     check_type = check_type.upper()
     if check_type not in {"MTK", "STK"}:

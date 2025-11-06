@@ -135,7 +135,7 @@ function initOverview() {
           <td>${device.serial_number || "—"}</td>
           <td>${device.status || "—"}</td>
           <td>${formatDate(assignment.assigned_from)}</td>
-          <td><a class="button-link" href="/devices/${device.id}">Öffnen</a></td>
+          <td><a class="button-link" href="/ui/devices/${device.id}">Öffnen</a></td>
         `;
         tbody.appendChild(row);
       });
@@ -298,7 +298,7 @@ function initDevices() {
       <td>${categoryName}</td>
       <td>${device.serial_number || "—"}</td>
       <td>${device.status || "—"}</td>
-      <td><a class="button-link" href="/devices/${device.id}">Öffnen</a></td>`;
+      <td><a class="button-link" href="/ui/devices/${device.id}">Öffnen</a></td>`;
     deviceTable.appendChild(row);
   }
 
@@ -706,7 +706,7 @@ function initRepairFilter() {
         const categoryName = device?.device_type?.category || "—";
         const row = document.createElement("tr");
         row.innerHTML = `
-          <td><a href="/devices/${repair.device_id}">${device?.inventory_number || repair.device_id}</a></td>
+          <td><a href="/ui/devices/${repair.device_id}">${device?.inventory_number || repair.device_id}</a></td>
           <td>${device?.serial_number || "—"}</td>
           <td>${categoryName}</td>
           <td>${formatDate(repair.reported_on)}</td>

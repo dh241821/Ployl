@@ -20,7 +20,7 @@
           <tbody>
             {% for check in checks %}
               <tr>
-                <td><a href="/devices/{{ check.device_id }}">Gerät #{{ check.device_id }}</a></td>
+                <td><a href="/ui/devices/{{ check.device_id }}">Gerät #{{ check.device_id }}</a></td>
                 <td>{{ check.performed_on }}</td>
                 <td>{{ check.due_on or "—" }}</td>
                 <td>{{ check.result or "—" }}</td>

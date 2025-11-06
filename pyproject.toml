@@ -34,6 +34,21 @@ dev = [
     "ruff"
 ]
 
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["uploads", "uploads.*"]
+
+[tool.setuptools.package-data]
+"app" = [
+    "frontend/templates/*.html",
+    "frontend/templates/**/*.html",
+    "frontend/static/*",
+    "frontend/static/**/*",
+]
+
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
