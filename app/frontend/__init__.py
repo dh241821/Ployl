@@ -20,7 +20,7 @@ from ..models.entities import (
     SafetyCheck,
     Vehicle,
 )
-from ..services.device_service import get_upcoming_maintenance
+from ..services.device_service import get_devices, get_upcoming_maintenance
 
 FRONTEND_DIR = Path(__file__).resolve().parent
 STATIC_DIR = FRONTEND_DIR / "static"
@@ -30,16 +30,7 @@ router = APIRouter(include_in_schema=False)
 
 
 async def _load_devices(session):
-    stmt = (
-        select(Device)
-        .options(
-            selectinload(Device.device_type).selectinload(DeviceType.category),
-            selectinload(Device.components).selectinload(DeviceComponent.component_type),
-        )
-        .order_by(Device.inventory_number)
-    )
-    result = await session.execute(stmt)
-    return list(result.scalars().unique())
+    return await get_devices(session)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -164,6 +155,11 @@ async def devices_page(request: Request) -> HTMLResponse:
                 )
             ).scalars().unique()
         )
+        locations = list(
+            (
+                await session.execute(select(Vehicle).order_by(Vehicle.radio_id))
+            ).scalars()
+        )
         devices = await _load_devices(session)
 
     devices_data = {
@@ -200,8 +196,35 @@ async def devices_page(request: Request) -> HTMLResponse:
                 "category_id": device.device_type.category.id
                 if device.device_type and device.device_type.category
                 else None,
+                "active_assignment": (
+                    assignment := device.active_assignment
+                )
+                and {
+                    "id": assignment.id,
+                    "vehicle_id": assignment.vehicle_id,
+                    "assigned_from": assignment.assigned_from.isoformat()
+                    if assignment.assigned_from
+                    else None,
+                    "vehicle": (
+                        {
+                            "id": assignment.vehicle.id,
+                            "radio_id": assignment.vehicle.radio_id,
+                            "vehicle_type": assignment.vehicle.vehicle_type,
+                        }
+                        if assignment.vehicle
+                        else None
+                    ),
+                },
             }
             for device in devices
+        ],
+        "locations": [
+            {
+                "id": vehicle.id,
+                "radio_id": vehicle.radio_id,
+                "vehicle_type": vehicle.vehicle_type,
+            }
+            for vehicle in locations
         ],
     }
 
@@ -214,6 +237,7 @@ async def devices_page(request: Request) -> HTMLResponse:
             "categories": categories,
             "device_types": device_types,
             "devices": devices,
+            "locations": locations,
             "devices_data": devices_data,
         },
     )

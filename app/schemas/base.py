@@ -121,6 +121,7 @@ class DeviceRead(ORMBase, DeviceBase):
     id: int
     device_type: DeviceTypeRead
     components: list[DeviceComponentRead] = Field(default_factory=list)
+    active_assignment: Optional["AssignmentRead"] = None
 
 
 class AssignmentBase(BaseModel):
@@ -139,6 +140,7 @@ class AssignmentCreate(AssignmentBase):
 
 class AssignmentRead(ORMBase, AssignmentBase):
     id: int
+    vehicle: Optional[VehicleRead] = None
 
 
 class SafetyCheckBase(BaseModel):

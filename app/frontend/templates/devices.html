@@ -54,7 +54,11 @@
         <label>Modell<input name="model" /></label>
         <label>
           Kategorie
-          <select name="category_id" id="product-category-select">
+          <select
+            name="category_id"
+            id="product-category-select"
+            data-placeholder="Keine"
+          >
             <option value="">Keine</option>
             {% for category in categories %}
               <option value="{{ category.id }}">{{ category.name }}</option>
@@ -120,13 +124,88 @@
       <h2>Geräte</h2>
     </div>
     <div class="card-body layout-grid">
+      <section class="filter-card">
+        <form id="device-filter-form" class="filter-form" autocomplete="off">
+          <label>
+            Kategorie
+            <select
+              name="category_id"
+              id="device-filter-category"
+              data-placeholder="Alle"
+            >
+              <option value="">Alle</option>
+              {% for category in categories %}
+                <option value="{{ category.id }}">{{ category.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            Produkt
+            <select
+              name="device_type_id"
+              id="device-filter-type"
+              data-placeholder="Alle"
+            >
+              <option value="">Alle</option>
+              {% for product in device_types %}
+                <option value="{{ product.id }}">{{ product.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            Standort
+            <select
+              name="location_id"
+              id="device-filter-location"
+              data-placeholder="Alle"
+            >
+              <option value="">Alle</option>
+              {% for vehicle in locations %}
+                <option value="{{ vehicle.id }}">
+                  {{ vehicle.radio_id }}{% if vehicle.vehicle_type %} ({{ vehicle.vehicle_type }}){% endif %}
+                </option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            Zuordnung
+            <select name="assigned" id="device-filter-assigned" data-placeholder="Alle">
+              <option value="">Alle</option>
+              <option value="assigned">Zugeordnet</option>
+              <option value="unassigned">Unzugeordnet</option>
+            </select>
+          </label>
+          <label>
+            Status
+            <input name="status" id="device-filter-status" placeholder="z. B. aktiv" />
+          </label>
+          <label>
+            Suche
+            <input
+              name="search"
+              id="device-filter-search"
+              placeholder="Inventar oder Seriennummer"
+            />
+          </label>
+          <div class="action-row">
+            <button type="submit">Filtern</button>
+            <button type="button" class="secondary" id="device-filter-reset">Zurücksetzen</button>
+            <button type="button" class="secondary" id="device-export">Export CSV</button>
+          </div>
+        </form>
+      </section>
       <form id="device-form" class="form-card" autocomplete="off">
         <h3>Gerät hinzufügen</h3>
         <input type="hidden" name="device_id" />
         <label>Inventarnummer<input name="inventory_number" required /></label>
         <label>
           Produkt
-          <select name="device_type_id" id="device-type-select" required>
+          <select
+            name="device_type_id"
+            id="device-type-select"
+            required
+            data-placeholder="Bitte wählen …"
+          >
             <option value="">Bitte wählen …</option>
             {% for product in device_types %}
               <option value="{{ product.id }}">{{ product.name }}</option>
@@ -153,6 +232,7 @@
               <th>Produkt</th>
               <th>Kategorie</th>
               <th>Seriennummer</th>
+              <th>Standort</th>
               <th>Status</th>
               <th>Aktionen</th>
             </tr>
@@ -164,6 +244,15 @@
                 <td>{{ device.device_type.name }}</td>
                 <td>{{ device.device_type.category.name if device.device_type.category else "—" }}</td>
                 <td>{{ device.serial_number or "—" }}</td>
+                <td>
+                  {% if device.active_assignment and device.active_assignment.vehicle %}
+                    {{ device.active_assignment.vehicle.radio_id }}{% if device.active_assignment.vehicle.vehicle_type %}
+                      ({{ device.active_assignment.vehicle.vehicle_type }})
+                    {% endif %}
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
                 <td>{{ device.status }}</td>
                 <td>
                   <div class="table-actions">

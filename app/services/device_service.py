@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import Select, select, update
+from sqlalchemy import Select, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -100,6 +100,70 @@ async def create_device(session: AsyncSession, payload: DeviceCreate) -> Device:
             )
     await session.flush()
     return device
+
+
+async def get_devices(
+    session: AsyncSession,
+    *,
+    category_id: int | None = None,
+    device_type_id: int | None = None,
+    status: str | None = None,
+    location_id: int | None = None,
+    assigned: bool | None = None,
+    search: str | None = None,
+) -> list[Device]:
+    status_value = status.strip() if isinstance(status, str) else None
+    search_value = search.strip() if isinstance(search, str) else None
+
+    stmt = (
+        select(Device)
+        .options(
+            selectinload(Device.device_type).selectinload(DeviceType.category),
+            selectinload(Device.components).selectinload(DeviceComponent.component_type),
+            selectinload(Device.assignments).selectinload(DeviceAssignment.vehicle),
+        )
+        .order_by(Device.inventory_number)
+    )
+
+    if category_id is not None:
+        stmt = stmt.join(Device.device_type).where(DeviceType.category_id == category_id)
+
+    if device_type_id is not None:
+        stmt = stmt.where(Device.device_type_id == device_type_id)
+
+    if status_value:
+        stmt = stmt.where(func.lower(Device.status) == status_value.lower())
+
+    if search_value:
+        term = f"%{search_value.lower()}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(Device.inventory_number).like(term),
+                func.lower(Device.serial_number).like(term),
+            )
+        )
+
+    if location_id is not None:
+        stmt = stmt.where(
+            exists().where(
+                DeviceAssignment.device_id == Device.id,
+                DeviceAssignment.vehicle_id == location_id,
+                DeviceAssignment.assigned_to.is_(None),
+            )
+        )
+
+    active_exists = exists().where(
+        DeviceAssignment.device_id == Device.id,
+        DeviceAssignment.assigned_to.is_(None),
+    )
+
+    if assigned is True:
+        stmt = stmt.where(active_exists)
+    elif assigned is False:
+        stmt = stmt.where(~active_exists)
+
+    result = await session.execute(stmt)
+    return list(result.scalars().unique())
 
 
 async def assign_device(session: AsyncSession, payload: AssignmentCreate) -> DeviceAssignment:

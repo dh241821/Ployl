@@ -95,6 +95,31 @@ main {
   background: rgba(255, 255, 255, 0.6);
 }
 
+.filter-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.6);
+  padding: 1rem 1.25rem;
+}
+
+.filter-form {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: end;
+}
+
+.filter-form .action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  grid-column: 1 / -1;
+}
+
+.filter-form button {
+  margin-top: 0;
+}
+
 .form-card h3 {
   margin: 0;
   font-size: 1.1rem;

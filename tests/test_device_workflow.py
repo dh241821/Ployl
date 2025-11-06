@@ -68,6 +68,16 @@ async def test_full_device_workflow(client):
     assignment_resp = await client.post("/assignments/", json=assignment_payload)
     assert assignment_resp.status_code == 201, assignment_resp.text
 
+    assigned_devices = await client.get("/devices/", params={"assigned": True})
+    assert assigned_devices.status_code == 200
+    assert any(row["id"] == device_id for row in assigned_devices.json())
+
+    devices_by_location = await client.get(
+        "/devices/", params={"location_id": vehicle_id}
+    )
+    assert devices_by_location.status_code == 200
+    assert any(row["id"] == device_id for row in devices_by_location.json())
+
     # MTK check without due date -> auto compute
     past_date = date.today() - timedelta(days=10)
     check_payload = {
@@ -117,6 +127,17 @@ async def test_full_device_workflow(client):
     alert = alerts[0]
     assert alert["severity"] == "critical"
     assert alert["days_until_due"] < 0
+
+    search_resp = await client.get("/devices/", params={"search": "inv-1000"})
+    assert search_resp.status_code == 200
+    assert any(row["inventory_number"] == "INV-1000" for row in search_resp.json())
+
+    export_resp = await client.get(
+        "/devices/export", params={"location_id": vehicle_id}
+    )
+    assert export_resp.status_code == 200
+    assert "text/csv" in export_resp.headers.get("content-type", "")
+    assert "INV-1000" in export_resp.text
 
     ack_resp = await client.post(
         f"/maintenance/alerts/{alert['id']}", json={"acknowledged": True}

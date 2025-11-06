@@ -303,10 +303,20 @@ function initOverview() {
 }
 
 function initDevices() {
-  const data = readJsonScript("devices-data") || { categories: [], device_types: [], devices: [] };
+  const data =
+    readJsonScript("devices-data") || {
+      categories: [],
+      device_types: [],
+      devices: [],
+      locations: [],
+    };
+
   const categoryForm = document.getElementById("category-form");
   const categoryTable = document.querySelector("#category-table tbody");
-  const categorySelects = [document.getElementById("product-category-select")];
+  const categorySelects = [
+    document.getElementById("product-category-select"),
+    document.getElementById("device-filter-category"),
+  ];
   const categoryIdInput = categoryForm?.querySelector('input[name="category_id"]');
   const categoryCancel = document.getElementById("category-cancel");
   const categorySubmit = categoryForm?.querySelector('button[type="submit"]');
@@ -314,9 +324,19 @@ function initDevices() {
   const deviceTypeForm = document.getElementById("device-type-form");
   const deviceTypeTable = document.querySelector("#device-type-table tbody");
   const deviceTypeSelect = document.getElementById("device-type-select");
+  const deviceTypeFilterSelect = document.getElementById("device-filter-type");
+  const deviceTypeSelects = [deviceTypeSelect, deviceTypeFilterSelect];
   const deviceTypeIdInput = deviceTypeForm?.querySelector('input[name="device_type_id"]');
   const deviceTypeCancel = document.getElementById("device-type-cancel");
   const deviceTypeSubmit = deviceTypeForm?.querySelector('button[type="submit"]');
+
+  const filterForm = document.getElementById("device-filter-form");
+  const filterReset = document.getElementById("device-filter-reset");
+  const exportButton = document.getElementById("device-export");
+  const locationFilterSelect = document.getElementById("device-filter-location");
+  const assignedFilterSelect = document.getElementById("device-filter-assigned");
+  const statusFilterInput = document.getElementById("device-filter-status");
+  const searchFilterInput = document.getElementById("device-filter-search");
 
   const componentSerials = document.getElementById("component-serials");
 
@@ -330,6 +350,8 @@ function initDevices() {
   const purchaseInput = deviceForm?.querySelector('input[name="purchase_date"]');
   const statusInput = deviceForm?.querySelector('input[name="status"]');
   const notesInput = deviceForm?.querySelector('textarea[name="notes"]');
+
+  let currentFilters = {};
 
   function mapCategory(item) {
     return { id: Number(item.id), name: item.name };
@@ -357,9 +379,23 @@ function initDevices() {
     };
   }
 
+  function mapLocation(item) {
+    const id = Number(item.id);
+    const radioId = item.radio_id;
+    const vehicleType = item.vehicle_type || "";
+    const label = vehicleType ? `${radioId} (${vehicleType})` : radioId;
+    return { id, radio_id: radioId, vehicle_type: vehicleType, label };
+  }
+
   function mapDevice(item) {
     const deviceType = item.device_type || {};
     const category = deviceType.category || {};
+    const assignment = item.active_assignment || item.current_assignment || null;
+    const vehicle = assignment?.vehicle || null;
+    const locationId = vehicle?.id ?? assignment?.vehicle_id ?? null;
+    const fallbackLabel = vehicle
+      ? `${vehicle.radio_id}${vehicle.vehicle_type ? ` (${vehicle.vehicle_type})` : ""}`
+      : null;
     return {
       id: Number(item.id),
       inventory_number: item.inventory_number,
@@ -370,11 +406,15 @@ function initDevices() {
       device_type_id: deviceType.id || item.device_type_id || null,
       device_type_name: deviceType.name || item.device_type_name || deviceType?.name || "—",
       category_id: category.id ?? item.category_id ?? deviceType?.category?.id ?? null,
+      location_id: locationId ? Number(locationId) : null,
+      location_label: fallbackLabel,
+      assigned: Boolean(locationId),
     };
   }
 
   data.categories = (data.categories || []).map(mapCategory);
   data.device_types = (data.device_types || []).map(mapDeviceType);
+  data.locations = (data.locations || []).map(mapLocation);
   data.devices = (data.devices || []).map(mapDevice);
 
   function updateCategorySelects() {
@@ -385,8 +425,13 @@ function initDevices() {
       .join("");
     categorySelects.forEach((select) => {
       if (!select) return;
-      const placeholder = select.querySelector("option[value=\""]");
-      select.innerHTML = `<option value="">${placeholder ? placeholder.textContent : "Keine"}</option>${options}`;
+      const current = select.value;
+      const placeholder = select.dataset.placeholder || "";
+      const fallback = placeholder || (select.required ? "Bitte wählen …" : "Keine");
+      select.innerHTML = `<option value="">${fallback}</option>${options}`;
+      if (current) {
+        select.value = current;
+      }
     });
   }
 
@@ -439,22 +484,53 @@ function initDevices() {
       .join("");
   }
 
-  function renderDeviceSelect() {
-    if (!deviceTypeSelect) return;
-    const current = deviceTypeSelect.value;
-    deviceTypeSelect.innerHTML = '<option value="">Bitte wählen …</option>';
-    data.device_types
+  function renderDeviceTypeSelects() {
+    deviceTypeSelects.forEach((select) => {
+      if (!select) return;
+      const current = select.value;
+      const placeholder = select.dataset.placeholder || "";
+      const fallback = placeholder || (select.required ? "Bitte wählen …" : "Alle");
+      select.innerHTML = `<option value="">${fallback}</option>`;
+      data.device_types
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .forEach((product) => {
+          const option = document.createElement("option");
+          option.value = product.id;
+          option.textContent = product.name;
+          select.appendChild(option);
+        });
+      if (current) {
+        select.value = current;
+      }
+    });
+  }
+
+  function renderLocationFilter() {
+    if (!locationFilterSelect) return;
+    const placeholder = locationFilterSelect.dataset.placeholder || "Alle";
+    const current = currentFilters.location_id ? String(currentFilters.location_id) : locationFilterSelect.value;
+    locationFilterSelect.innerHTML = `<option value="">${placeholder}</option>`;
+    data.locations
       .slice()
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .forEach((product) => {
+      .sort((a, b) => a.radio_id.localeCompare(b.radio_id))
+      .forEach((location) => {
         const option = document.createElement("option");
-        option.value = product.id;
-        option.textContent = product.name;
-        deviceTypeSelect.appendChild(option);
+        option.value = location.id;
+        option.textContent = location.label;
+        locationFilterSelect.appendChild(option);
       });
     if (current) {
-      deviceTypeSelect.value = current;
+      locationFilterSelect.value = current;
     }
+  }
+
+  function getLocationLabel(device) {
+    if (device.location_id) {
+      const match = data.locations.find((location) => location.id === device.location_id);
+      if (match) return match.label;
+    }
+    return device.location_label || "—";
   }
 
   function renderDevices() {
@@ -469,6 +545,7 @@ function initDevices() {
         const categoryName = product
           ? data.categories.find((cat) => cat.id === product.category_id)?.name || "—"
           : data.categories.find((cat) => cat.id === device.category_id)?.name || "—";
+        const locationLabel = getLocationLabel(device);
         const row = document.createElement("tr");
         row.dataset.deviceId = device.id;
         row.innerHTML = `
@@ -476,6 +553,7 @@ function initDevices() {
           <td>${productName}</td>
           <td>${categoryName}</td>
           <td>${device.serial_number || "—"}</td>
+          <td>${locationLabel || "—"}</td>
           <td>${device.status || "—"}</td>
           <td>
             <div class="table-actions">
@@ -515,28 +593,84 @@ function initDevices() {
     }
   }
 
+  function syncFilterForm() {
+    if (categorySelects[1]) {
+      categorySelects[1].value = currentFilters.category_id ? String(currentFilters.category_id) : "";
+    }
+    if (deviceTypeFilterSelect) {
+      deviceTypeFilterSelect.value = currentFilters.device_type_id ? String(currentFilters.device_type_id) : "";
+    }
+    if (locationFilterSelect) {
+      locationFilterSelect.value = currentFilters.location_id ? String(currentFilters.location_id) : "";
+    }
+    if (assignedFilterSelect) {
+      assignedFilterSelect.value = currentFilters.assigned || "";
+    }
+    if (statusFilterInput) {
+      statusFilterInput.value = currentFilters.status || "";
+    }
+    if (searchFilterInput) {
+      searchFilterInput.value = currentFilters.search || "";
+    }
+  }
+
   async function refreshCategories() {
     const refreshed = await apiFetch("/categories/");
     data.categories = (refreshed || []).map(mapCategory);
     renderCategories();
     updateCategorySelects();
     renderDeviceTypes();
+    renderDeviceTypeSelects();
     renderDevices();
+    syncFilterForm();
   }
 
   async function loadDeviceTypes() {
     const refreshed = await apiFetch("/device-types/");
     data.device_types = (refreshed || []).map(mapDeviceType);
     renderDeviceTypes();
-    renderDeviceSelect();
+    renderDeviceTypeSelects();
+    syncFilterForm();
     deviceTypeSelect?.dispatchEvent(new Event("change"));
     renderDevices();
   }
 
-  async function loadDevices() {
-    const refreshed = await apiFetch("/devices/");
+  function buildFilterParams(filters) {
+    const params = new URLSearchParams();
+    if (filters.category_id) params.set("category_id", String(filters.category_id));
+    if (filters.device_type_id) params.set("device_type_id", String(filters.device_type_id));
+    if (filters.location_id) params.set("location_id", String(filters.location_id));
+    if (filters.status) params.set("status", filters.status);
+    if (filters.search) params.set("search", filters.search);
+    if (filters.assigned === "assigned") params.set("assigned", "true");
+    if (filters.assigned === "unassigned") params.set("assigned", "false");
+    return params;
+  }
+
+  async function loadDevices(filters = currentFilters) {
+    currentFilters = {
+      category_id: filters.category_id || null,
+      device_type_id: filters.device_type_id || null,
+      location_id: filters.location_id || null,
+      assigned: filters.assigned || "",
+      status: filters.status || "",
+      search: filters.search || "",
+    };
+    const params = buildFilterParams(currentFilters);
+    const query = params.toString();
+    const refreshed = await apiFetch(query ? `/devices/?${query}` : "/devices/");
     data.devices = (refreshed || []).map(mapDevice);
     renderDevices();
+    syncFilterForm();
+  }
+
+  async function loadLocations() {
+    const refreshed = await apiFetch("/vehicles/");
+    if (!Array.isArray(refreshed)) return;
+    data.locations = refreshed.map(mapLocation);
+    renderLocationFilter();
+    renderDevices();
+    syncFilterForm();
   }
 
   categoryForm?.addEventListener("submit", async (event) => {
@@ -620,7 +754,8 @@ function initDevices() {
     }
     const componentLines = (formData.get("components") || "")
       .toString()
-      .split(/\r?\n/)
+      .split(/?
+/)
       .map((line) => line.trim())
       .filter(Boolean)
       .map((name) => ({ name }));
@@ -685,7 +820,8 @@ function initDevices() {
       const input = prompt("Neue Komponente hinzufügen (mehrere Einträge mit Zeilenumbruch)");
       if (!input) return;
       const components = input
-        .split(/\r?\n/)
+        .split(/?
+/)
         .map((line) => line.trim())
         .filter(Boolean)
         .map((name) => ({ name }));
@@ -854,13 +990,44 @@ function initDevices() {
     resetDeviceForm();
   });
 
+  filterForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formData = new FormData(filterForm);
+    const filters = {
+      category_id: formData.get("category_id") ? Number(formData.get("category_id")) : null,
+      device_type_id: formData.get("device_type_id") ? Number(formData.get("device_type_id")) : null,
+      location_id: formData.get("location_id") ? Number(formData.get("location_id")) : null,
+      assigned: (formData.get("assigned") || "").toString(),
+      status: (formData.get("status") || "").toString().trim(),
+      search: (formData.get("search") || "").toString().trim(),
+    };
+    if (filters.assigned !== "assigned" && filters.assigned !== "unassigned") {
+      filters.assigned = "";
+    }
+    await loadDevices(filters);
+  });
+
+  filterReset?.addEventListener("click", async () => {
+    filterForm?.reset();
+    await loadDevices({});
+  });
+
+  exportButton?.addEventListener("click", () => {
+    const params = buildFilterParams(currentFilters);
+    const query = params.toString();
+    const url = query ? `/devices/export?${query}` : "/devices/export";
+    window.open(url, "_blank");
+  });
+
   updateCategorySelects();
   renderCategories();
   renderDeviceTypes();
-  renderDeviceSelect();
+  renderDeviceTypeSelects();
+  renderLocationFilter();
   renderDevices();
+  syncFilterForm();
+  loadLocations();
 }
-
 function initDeviceDetail() {
   const data = readJsonScript("device-detail-data");
   if (!data) return;

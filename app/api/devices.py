@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import csv
+from io import StringIO
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..models.entities import Device, DeviceComponent, DeviceType
 from ..schemas.base import DeviceCreate, DeviceRead, DeviceUpdate
-from ..services.device_service import create_device, get_device_history
+from ..services.device_service import create_device, get_device_history, get_devices
 from .dependencies import get_db_session
 
 router = APIRouter(prefix="/devices", tags=["devices"])
@@ -27,18 +30,95 @@ async def create_device_endpoint(
 
 
 @router.get("/", response_model=list[DeviceRead])
-async def list_devices(session: AsyncSession = Depends(get_db_session)) -> list[Device]:
-    result = await session.execute(
-        select(Device)
-        .options(
-            selectinload(Device.device_type).selectinload(DeviceType.category)
-        )
-        .options(
-            selectinload(Device.components).selectinload(DeviceComponent.component_type)
-        )
-        .order_by(Device.inventory_number)
+async def list_devices(
+    category_id: int | None = None,
+    device_type_id: int | None = None,
+    status: str | None = None,
+    location_id: int | None = None,
+    assigned: bool | None = None,
+    search: str | None = None,
+    session: AsyncSession = Depends(get_db_session),
+) -> list[Device]:
+    devices = await get_devices(
+        session,
+        category_id=category_id,
+        device_type_id=device_type_id,
+        status=status,
+        location_id=location_id,
+        assigned=assigned,
+        search=search,
     )
-    return list(result.scalars().unique())
+    return devices
+
+
+@router.get("/export", response_class=StreamingResponse)
+async def export_devices(
+    category_id: int | None = None,
+    device_type_id: int | None = None,
+    status: str | None = None,
+    location_id: int | None = None,
+    assigned: bool | None = None,
+    search: str | None = None,
+    session: AsyncSession = Depends(get_db_session),
+) -> StreamingResponse:
+    devices = await get_devices(
+        session,
+        category_id=category_id,
+        device_type_id=device_type_id,
+        status=status,
+        location_id=location_id,
+        assigned=assigned,
+        search=search,
+    )
+
+    def iter_rows():
+        header = [
+            "Inventarnummer",
+            "Produkt",
+            "Kategorie",
+            "Seriennummer",
+            "Status",
+            "Standort",
+        ]
+        buffer = StringIO()
+        writer = csv.writer(buffer, delimiter=";")
+        writer.writerow(header)
+        yield buffer.getvalue()
+
+        for device in devices:
+            buffer = StringIO()
+            writer = csv.writer(buffer, delimiter=";")
+            device_type = device.device_type.name if device.device_type else ""
+            category = (
+                device.device_type.category.name
+                if device.device_type and device.device_type.category
+                else ""
+            )
+            assignment = device.active_assignment
+            location = ""
+            if assignment and assignment.vehicle:
+                vehicle = assignment.vehicle
+                location = (
+                    f"{vehicle.radio_id} ({vehicle.vehicle_type})"
+                    if vehicle.vehicle_type
+                    else vehicle.radio_id
+                )
+            writer.writerow(
+                [
+                    device.inventory_number,
+                    device_type,
+                    category,
+                    device.serial_number or "",
+                    device.status or "",
+                    location,
+                ]
+            )
+            yield buffer.getvalue()
+
+    headers = {
+        "Content-Disposition": "attachment; filename=medizingeraete.csv",
+    }
+    return StreamingResponse(iter_rows(), media_type="text/csv", headers=headers)
 
 
 @router.get("/{device_id}", response_model=DeviceRead)

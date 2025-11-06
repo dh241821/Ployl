@@ -60,6 +60,8 @@ steht direkt unter `http://localhost:8000/` zur Verfügung und bietet:
 - Pflegeoberfläche für Kategorien, Produkte (inkl. Komponenten) und Geräte
 - Detailseiten je Gerät mit Zuordnung, Prüfungs- und Reparaturformularen sowie PDF-Uploads
 - Separate STK-/MTK-Listen und ein filterbares Reparaturlog
+- Geräteübersicht mit Filtern nach Kategorie, Produkt, Standort, Status und Volltextsuche
+  sowie CSV-Export der aktuellen Auswahl
 
 Die OpenAPI-Dokumentation findet sich weiterhin unter `http://localhost:8000/docs`.
 

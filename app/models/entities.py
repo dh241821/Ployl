@@ -103,6 +103,24 @@ class Device(Base):
         back_populates="device", cascade="all, delete-orphan"
     )
 
+    @property
+    def active_assignment(self) -> Optional["DeviceAssignment"]:
+        """Return the current open assignment for the device, if any."""
+
+        if not self.assignments:
+            return None
+
+        open_assignments = [
+            assignment for assignment in self.assignments if assignment.assigned_to is None
+        ]
+        if not open_assignments:
+            return None
+
+        return max(
+            open_assignments,
+            key=lambda assignment: assignment.assigned_from or datetime.min,
+        )
+
 
 class DeviceComponent(Base):
     __tablename__ = "device_component"
