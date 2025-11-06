@@ -186,7 +186,14 @@ function initOverview() {
         in_service_since: vehicle.in_service_since || null,
         out_of_service: vehicle.out_of_service || null,
       };
-      data.vehicles.push(stored);
+      const refreshed = await apiFetch("/vehicles/");
+      data.vehicles = (refreshed || []).map((item) => ({
+        id: Number(item.id),
+        radio_id: item.radio_id,
+        vehicle_type: item.vehicle_type,
+        in_service_since: item.in_service_since || null,
+        out_of_service: item.out_of_service || null,
+      }));
       renderVehicleTable();
       renderLocationSelect(String(stored.id));
       vehicleForm.reset();
@@ -251,7 +258,9 @@ function initDevices() {
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((product) => {
         const components = product.components?.length
-          ? `<ul>${product.components.map((comp) => `<li>${comp}</li>`).join("")}</ul>`
+          ? `<ul>${product.components
+              .map((comp) => `<li>${typeof comp === "string" ? comp : comp.name}</li>`)
+              .join("")}</ul>`
           : "—";
         const categoryName = data.categories.find((cat) => cat.id === product.category_id)?.name || "—";
         return `
@@ -308,11 +317,11 @@ function initDevices() {
     const name = (formData.get("name") || "").toString().trim();
     if (!name) return;
     try {
-      const category = await apiFetch("/categories/", {
+      await apiFetch("/categories/", {
         method: "POST",
         body: { name },
       });
-      data.categories.push(category);
+      data.categories = await apiFetch("/categories/");
       renderCategories();
       updateCategorySelects();
       categoryForm.reset();
@@ -350,16 +359,16 @@ function initDevices() {
         method: "POST",
         body: payload,
       });
-      const stored = {
-        id: product.id,
-        name: product.name,
-        manufacturer: product.manufacturer,
-        model: product.model,
-        category_id: product.category?.id || payload.category_id,
-        is_composite: product.is_composite,
-        components: product.components?.map((comp) => ({ id: comp.id, name: comp.name })) || [],
-      };
-      data.device_types.push(stored);
+      const refreshed = await apiFetch("/device-types/");
+      data.device_types = (refreshed || []).map((item) => ({
+        id: item.id,
+        name: item.name,
+        manufacturer: item.manufacturer,
+        model: item.model,
+        category_id: item.category?.id || null,
+        is_composite: item.is_composite,
+        components: item.components?.map((comp) => ({ id: comp.id, name: comp.name })) || [],
+      }));
       renderDeviceTypes();
       renderDeviceSelect();
       deviceTypeForm.reset();
@@ -422,19 +431,18 @@ function initDevices() {
         method: "POST",
         body: payload,
       });
-      const stored = {
-        id: device.id,
-        inventory_number: device.inventory_number,
-        serial_number: device.serial_number,
-        status: device.status,
+      const refreshed = await apiFetch("/devices/");
+      data.devices = (refreshed || []).map((item) => ({
+        id: item.id,
+        inventory_number: item.inventory_number,
+        serial_number: item.serial_number,
+        status: item.status,
         device_type: {
-          name: device.device_type?.name,
-          category_id: device.device_type?.category?.id || null,
+          name: item.device_type?.name,
+          category_id: item.device_type?.category?.id || null,
         },
-      };
-      data.devices = data.devices || [];
-      data.devices.push(stored);
-      renderDeviceTable(stored);
+      }));
+      renderDeviceTable(null, false);
       deviceForm.reset();
       componentSerials && (componentSerials.hidden = true);
       showToast("Gerät gespeichert.", "info");
