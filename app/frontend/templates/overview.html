@@ -3,6 +3,54 @@
 {% block content %}
   <section class="card">
     <div class="card-header">
+      <h2>Funkkennungen &amp; Lager verwalten</h2>
+      <p class="help">Lege neue Funkkennungen oder Lagerstandorte an, damit Geräte zugeordnet werden können.</p>
+    </div>
+    <div class="card-body layout-grid">
+      <form id="vehicle-form" class="form-card" autocomplete="off">
+        <h3>Neuer Standort</h3>
+        <label>Funkkennung oder Lager<input name="radio_id" required /></label>
+        <label>
+          Typ
+          <input name="vehicle_type" list="vehicle-type-options" placeholder="z. B. RTW-C, NEF, KTW, Lager" required />
+        </label>
+        <label>In Betrieb seit<input type="date" name="in_service_since" /></label>
+        <label>Außer Betrieb seit<input type="date" name="out_of_service" /></label>
+        <button type="submit">Standort speichern</button>
+      </form>
+      <div class="table-wrapper">
+        <table class="data-table" id="vehicle-table">
+          <thead>
+            <tr>
+              <th>Funkkennung / Lager</th>
+              <th>Typ</th>
+              <th>In Betrieb seit</th>
+              <th>Außer Betrieb</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for vehicle in vehicles %}
+              <tr>
+                <td>{{ vehicle.radio_id }}</td>
+                <td>{{ vehicle.vehicle_type }}</td>
+                <td>{{ vehicle.in_service_since or "—" }}</td>
+                <td>{{ vehicle.out_of_service or "—" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <datalist id="vehicle-type-options">
+      <option value="RTW-C"></option>
+      <option value="NEF"></option>
+      <option value="KTW"></option>
+      <option value="Lager"></option>
+    </datalist>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
       <h2>Funkkennung oder Lager auswählen</h2>
       <p class="help">Wähle eine Funkkennung oder ein Lager, um alle zugeordneten Medizinprodukte anzuzeigen.</p>
     </div>

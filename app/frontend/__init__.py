@@ -71,6 +71,12 @@ async def overview(request: Request) -> HTMLResponse:
                 "id": vehicle.id,
                 "radio_id": vehicle.radio_id,
                 "vehicle_type": vehicle.vehicle_type,
+                "in_service_since": vehicle.in_service_since.isoformat()
+                if vehicle.in_service_since
+                else None,
+                "out_of_service": vehicle.out_of_service.isoformat()
+                if vehicle.out_of_service
+                else None,
             }
             for vehicle in vehicles
         ],

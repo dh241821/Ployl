@@ -74,18 +74,42 @@ async function refreshHistory(deviceId, state) {
 }
 
 function initOverview() {
-  const data = readJsonScript("overview-data");
-  if (!data) return;
+  const data = readJsonScript("overview-data") || { vehicles: [], assignments: [], devices: [] };
   const select = document.getElementById("location-select");
   const tbody = document.querySelector("#location-device-table tbody");
+  const vehicleForm = document.getElementById("vehicle-form");
+  const vehicleTable = document.querySelector("#vehicle-table tbody");
   const assignments = (data.assignments || []).map((assignment) => ({
     ...assignment,
     vehicle_id: Number(assignment.vehicle_id),
     device_id: Number(assignment.device_id),
   }));
-  const devices = new Map((data.devices || []).map((device) => [device.id, device]));
+  const deviceMap = new Map((data.devices || []).map((device) => [device.id, device]));
+  data.vehicles = (data.vehicles || []).map((vehicle) => ({
+    ...vehicle,
+    id: Number(vehicle.id),
+  }));
 
-  function render(vehicleId) {
+  function renderVehicleTable() {
+    if (!vehicleTable) return;
+    vehicleTable.innerHTML = "";
+    data.vehicles
+      .slice()
+      .sort((a, b) => a.radio_id.localeCompare(b.radio_id))
+      .forEach((vehicle) => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${vehicle.radio_id}</td>
+          <td>${vehicle.vehicle_type}</td>
+          <td>${formatDate(vehicle.in_service_since)}</td>
+          <td>${formatDate(vehicle.out_of_service)}</td>
+        `;
+        vehicleTable.appendChild(row);
+      });
+  }
+
+  function renderAssignments(vehicleId) {
+    if (!tbody) return;
     tbody.innerHTML = "";
     const filtered = assignments.filter((assignment) => assignment.vehicle_id === vehicleId);
     if (filtered.length === 0) {
@@ -98,9 +122,10 @@ function initOverview() {
       return;
     }
     filtered
+      .slice()
       .sort((a, b) => (a.assigned_from || "").localeCompare(b.assigned_from || ""))
       .forEach((assignment) => {
-        const device = devices.get(assignment.device_id);
+        const device = deviceMap.get(assignment.device_id);
         if (!device) return;
         const row = document.createElement("tr");
         row.innerHTML = `
@@ -116,14 +141,72 @@ function initOverview() {
       });
   }
 
+  function renderLocationSelect(selectedId) {
+    if (!select) return;
+    const placeholderOption = select.querySelector("option[value=\""]");
+    const placeholderText = placeholderOption ? placeholderOption.textContent : "Bitte wählen …";
+    select.innerHTML = `<option value="">${placeholderText}</option>`;
+    data.vehicles
+      .slice()
+      .sort((a, b) => a.radio_id.localeCompare(b.radio_id))
+      .forEach((vehicle) => {
+        const option = document.createElement("option");
+        option.value = vehicle.id;
+        option.textContent = `${vehicle.radio_id} – ${vehicle.vehicle_type}`;
+        select.appendChild(option);
+      });
+    if (selectedId) {
+      select.value = selectedId;
+      renderAssignments(Number(selectedId));
+    }
+  }
+
+  vehicleForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formData = new FormData(vehicleForm);
+    const payload = {
+      radio_id: (formData.get("radio_id") || "").toString().trim(),
+      vehicle_type: (formData.get("vehicle_type") || "").toString().trim(),
+      in_service_since: formData.get("in_service_since") || null,
+      out_of_service: formData.get("out_of_service") || null,
+    };
+    if (!payload.radio_id || !payload.vehicle_type) {
+      showToast("Bitte Funkkennung und Typ angeben.", "error");
+      return;
+    }
+    try {
+      const vehicle = await apiFetch("/vehicles/", {
+        method: "POST",
+        body: payload,
+      });
+      const stored = {
+        id: Number(vehicle.id),
+        radio_id: vehicle.radio_id,
+        vehicle_type: vehicle.vehicle_type,
+        in_service_since: vehicle.in_service_since || null,
+        out_of_service: vehicle.out_of_service || null,
+      };
+      data.vehicles.push(stored);
+      renderVehicleTable();
+      renderLocationSelect(String(stored.id));
+      vehicleForm.reset();
+      showToast("Standort gespeichert.", "info");
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  });
+
   select?.addEventListener("change", (event) => {
     const value = Number(event.target.value);
     if (!value) {
-      tbody.innerHTML = "";
+      if (tbody) tbody.innerHTML = "";
       return;
     }
-    render(value);
+    renderAssignments(value);
   });
+
+  renderVehicleTable();
+  renderLocationSelect(select?.value);
 }
 
 function initDevices() {
