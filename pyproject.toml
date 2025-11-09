@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ployl"
+version = "0.1.0"
+description = "Medical device management backend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy>=2.0",
+    "alembic",
+    "pydantic[email]",
+    "python-multipart",
+    "jinja2",
+    "apscheduler",
+    "passlib[bcrypt]",
+    "python-dateutil",
+    "psycopg2-binary",
+    "aiosqlite",
+    "httpx",
+    "typer",
+    "rich"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "anyio",
+    "coverage",
+    "ruff"
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["uploads", "uploads.*"]
+
+[tool.setuptools.package-data]
+"app" = [
+    "frontend/templates/*.html",
+    "frontend/templates/**/*.html",
+    "frontend/static/*",
+    "frontend/static/**/*",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+

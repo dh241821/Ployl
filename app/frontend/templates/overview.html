@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% set page = "overview" %}
+{% block content %}
+  <section class="card">
+    <div class="card-header">
+      <h2>Schnellübersicht</h2>
+      <p class="help">Aktuelle Kennzahlen über Gerätebestand, Wartungen und Reparaturen.</p>
+    </div>
+    <div class="card-body">
+      <dl class="definition-list">
+        <div>
+          <dt>Geräte gesamt</dt>
+          <dd>{{ metrics.total_devices }}</dd>
+        </div>
+        <div>
+          <dt>Davon aktiv</dt>
+          <dd>{{ metrics.active_devices }}</dd>
+        </div>
+        <div>
+          <dt>Aktive Zuordnungen</dt>
+          <dd>{{ metrics.active_assignments }}</dd>
+        </div>
+        <div>
+          <dt>Offene Reparaturen</dt>
+          <dd>{{ metrics.open_repairs }}</dd>
+        </div>
+        <div>
+          <dt>MTK fällig (30 Tage)</dt>
+          <dd>{{ metrics.mtk_due }}</dd>
+        </div>
+        <div>
+          <dt>STK fällig (30 Tage)</dt>
+          <dd>{{ metrics.stk_due }}</dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Funkkennungen &amp; Lager verwalten</h2>
+      <p class="help">Lege neue Funkkennungen oder Lagerstandorte an, damit Geräte zugeordnet werden können.</p>
+    </div>
+    <div class="card-body layout-grid">
+      <form id="vehicle-form" class="form-card" autocomplete="off">
+        <h3>Neuer Standort</h3>
+        <input type="hidden" name="vehicle_id" />
+        <label>Funkkennung oder Lager<input name="radio_id" required /></label>
+        <label>
+          Typ
+          <input name="vehicle_type" list="vehicle-type-options" placeholder="z. B. RTW-C, NEF, KTW, Lager" required />
+        </label>
+        <label>In Betrieb seit<input type="date" name="in_service_since" /></label>
+        <label>Außer Betrieb seit<input type="date" name="out_of_service" /></label>
+        <div class="action-row">
+          <button type="submit">Standort speichern</button>
+          <button type="button" class="secondary" id="vehicle-cancel" hidden>Abbrechen</button>
+        </div>
+      </form>
+      <div class="table-wrapper">
+        <table class="data-table" id="vehicle-table">
+          <thead>
+            <tr>
+              <th>Funkkennung / Lager</th>
+              <th>Typ</th>
+              <th>In Betrieb seit</th>
+              <th>Außer Betrieb</th>
+              <th>Aktionen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for vehicle in vehicles %}
+              <tr>
+                <td>{{ vehicle.radio_id }}</td>
+                <td>{{ vehicle.vehicle_type }}</td>
+                <td>{{ vehicle.in_service_since or "—" }}</td>
+                <td>{{ vehicle.out_of_service or "—" }}</td>
+                <td>
+                  <div class="table-actions">
+                    <button type="button" class="secondary small" data-action="edit" data-id="{{ vehicle.id }}">Bearbeiten</button>
+                    <button type="button" class="danger small" data-action="delete" data-id="{{ vehicle.id }}">Löschen</button>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <datalist id="vehicle-type-options">
+      <option value="RTW-C"></option>
+      <option value="NEF"></option>
+      <option value="KTW"></option>
+      <option value="Lager"></option>
+    </datalist>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Funkkennung oder Lager auswählen</h2>
+      <p class="help">Wähle eine Funkkennung oder ein Lager, um alle zugeordneten Medizinprodukte anzuzeigen.</p>
+    </div>
+    <div class="card-body">
+      <label class="inline">
+        Standort
+        <select id="location-select">
+          <option value="">Bitte wählen …</option>
+          {% for vehicle in vehicles %}
+            <option value="{{ vehicle.id }}">{{ vehicle.radio_id }} – {{ vehicle.vehicle_type }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="table-wrapper">
+        <table class="data-table" id="location-device-table">
+          <thead>
+            <tr>
+              <th>Inventarnummer</th>
+              <th>Produkt</th>
+              <th>Kategorie</th>
+              <th>Seriennummer</th>
+              <th>Status</th>
+              <th>Seit</th>
+              <th>Aktionen</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <script type="application/json" id="overview-data">
+    {{ overview_data | tojson }}
+  </script>
+{% endblock %}

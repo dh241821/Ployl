@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+  <section class="card">
+    <div class="card-header">
+      <h2>Reparaturlog filtern</h2>
+      <p class="help">Wähle zuerst eine Kategorie und anschließend eine Seriennummer, um passende Reparatureinträge zu sehen.</p>
+    </div>
+    <div class="card-body">
+      <form id="repair-filter" class="filter-bar">
+        <label>
+          Kategorie
+          <select name="category_id" id="filter-category">
+            <option value="">Alle</option>
+            {% for category in categories %}
+              <option value="{{ category.id }}">{{ category.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          Seriennummer
+          <select name="serial_number" id="filter-serial">
+            <option value="">Alle</option>
+            {% for device in devices if device.serial_number %}
+              <option value="{{ device.serial_number }}">{{ device.serial_number }} – {{ device.device_type.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit">Filtern</button>
+      </form>
+      <div class="table-wrapper">
+        <table class="data-table" id="repair-filter-table">
+          <thead>
+            <tr>
+              <th>Gerät</th>
+              <th>Seriennummer</th>
+              <th>Kategorie</th>
+              <th>Gemeldet</th>
+              <th>Erledigt</th>
+              <th>Fehler</th>
+              <th>Maßnahme</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <script type="application/json" id="repair-filter-data">
+    {{ repairs_data | tojson }}
+  </script>
+{% endblock %}

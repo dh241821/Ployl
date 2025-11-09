@@ -1,0 +1,492 @@
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from typing import Optional
+
+from sqlalchemy import Select, exists, func, or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from ..core.config import get_settings
+from ..models.entities import (
+    Attachment,
+    ComponentType,
+    Device,
+    DeviceAssignment,
+    DeviceCategory,
+    DeviceComponent,
+    DeviceType,
+    MaintenanceAlert,
+    RepairLog,
+    SafetyCheck,
+    Vehicle,
+)
+from ..schemas.base import (
+    AssignmentCreate,
+    DeviceCategoryCreate,
+    DeviceCreate,
+    DeviceTypeCreate,
+    MaintenanceAlertUpdate,
+    MaintenanceWindow,
+    RepairLogCreate,
+    RepairLogUpdate,
+    SafetyCheckCreate,
+    VehicleCreate,
+)
+
+
+async def create_vehicle(session: AsyncSession, payload: VehicleCreate) -> Vehicle:
+    data = payload.dict()
+    if not data.get("name"):
+        data["name"] = data["radio_id"]
+    vehicle = Vehicle(**data)
+    session.add(vehicle)
+    await session.flush()
+    return vehicle
+
+
+async def create_device_category(
+    session: AsyncSession, payload: DeviceCategoryCreate
+) -> DeviceCategory:
+    category = DeviceCategory(**payload.dict())
+    session.add(category)
+    await session.flush()
+    return category
+
+
+async def create_device_type(
+    session: AsyncSession, payload: DeviceTypeCreate
+) -> DeviceType:
+    device_type = DeviceType(
+        name=payload.name,
+        manufacturer=payload.manufacturer,
+        model=payload.model,
+        default_mtk_interval_days=payload.default_mtk_interval_days,
+        default_stk_interval_days=payload.default_stk_interval_days,
+        is_composite=payload.is_composite,
+        category_id=payload.category_id,
+    )
+    for component in payload.components:
+        device_type.component_types.append(ComponentType(name=component.name))
+    session.add(device_type)
+    await session.flush()
+    return device_type
+
+
+async def create_device(session: AsyncSession, payload: DeviceCreate) -> Device:
+    device = Device(
+        inventory_number=payload.inventory_number,
+        device_type_id=payload.device_type_id,
+        serial_number=payload.serial_number,
+        purchase_date=payload.purchase_date,
+        status=payload.status,
+        notes=payload.notes,
+    )
+    session.add(device)
+    await session.flush()
+
+    # Create components where applicable
+    if payload.component_serials:
+        component_types = await session.execute(
+            select(ComponentType).where(ComponentType.device_type_id == payload.device_type_id)
+        )
+        for component_type in component_types.scalars():
+            serial = payload.component_serials.get(component_type.id)
+            device.components.append(
+                DeviceComponent(
+                    component_type_id=component_type.id,
+                    serial_number=serial,
+                )
+            )
+    await session.flush()
+    return device
+
+
+async def get_devices(
+    session: AsyncSession,
+    *,
+    category_id: int | None = None,
+    device_type_id: int | None = None,
+    status: str | None = None,
+    location_id: int | None = None,
+    assigned: bool | None = None,
+    search: str | None = None,
+) -> list[Device]:
+    status_value = status.strip() if isinstance(status, str) else None
+    search_value = search.strip() if isinstance(search, str) else None
+
+    stmt = (
+        select(Device)
+        .options(
+            selectinload(Device.device_type).selectinload(DeviceType.category),
+            selectinload(Device.components).selectinload(DeviceComponent.component_type),
+            selectinload(Device.assignments).selectinload(DeviceAssignment.vehicle),
+        )
+        .order_by(Device.inventory_number)
+    )
+
+    if category_id is not None:
+        stmt = stmt.join(Device.device_type).where(DeviceType.category_id == category_id)
+
+    if device_type_id is not None:
+        stmt = stmt.where(Device.device_type_id == device_type_id)
+
+    if status_value:
+        stmt = stmt.where(func.lower(Device.status) == status_value.lower())
+
+    if search_value:
+        term = f"%{search_value.lower()}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(Device.inventory_number).like(term),
+                func.lower(Device.serial_number).like(term),
+            )
+        )
+
+    if location_id is not None:
+        stmt = stmt.where(
+            exists().where(
+                DeviceAssignment.device_id == Device.id,
+                DeviceAssignment.vehicle_id == location_id,
+                DeviceAssignment.assigned_to.is_(None),
+            )
+        )
+
+    active_exists = exists().where(
+        DeviceAssignment.device_id == Device.id,
+        DeviceAssignment.assigned_to.is_(None),
+    )
+
+    if assigned is True:
+        stmt = stmt.where(active_exists)
+    elif assigned is False:
+        stmt = stmt.where(~active_exists)
+
+    result = await session.execute(stmt)
+    return list(result.scalars().unique())
+
+
+async def assign_device(session: AsyncSession, payload: AssignmentCreate) -> DeviceAssignment:
+    # Close open assignment for same device/component
+    existing_stmt = select(DeviceAssignment).where(
+        DeviceAssignment.device_id == payload.device_id,
+        DeviceAssignment.component_id == payload.component_id,
+        DeviceAssignment.assigned_to.is_(None),
+    )
+    existing_assignment = await session.execute(existing_stmt)
+    for assignment in existing_assignment.scalars():
+        assignment.assigned_to = payload.assigned_from or datetime.utcnow()
+
+    assignment = DeviceAssignment(**payload.dict())
+    session.add(assignment)
+    await session.flush()
+    return assignment
+
+
+async def create_safety_check(
+    session: AsyncSession, payload: SafetyCheckCreate
+) -> SafetyCheck:
+    safety_check = SafetyCheck(
+        device_id=payload.device_id,
+        component_id=payload.component_id,
+        check_type=payload.check_type,
+        performed_on=payload.performed_on,
+        due_on=payload.due_on,
+        performed_by=payload.performed_by,
+        result=payload.result,
+        certificate_path=payload.certificate_path,
+        notes=payload.notes,
+    )
+    session.add(safety_check)
+    await session.flush()
+
+    for attachment in payload.attachments:
+        safety_check.attachments.append(
+            Attachment(file_path=attachment.file_path, description=attachment.description)
+        )
+
+    await session.flush()
+    await _resolve_alerts_for_check(
+        session,
+        safety_check.device_id,
+        safety_check.check_type,
+        safety_check.component_id,
+    )
+    return safety_check
+
+
+async def create_repair_log(session: AsyncSession, payload: RepairLogCreate) -> RepairLog:
+    repair = RepairLog(
+        device_id=payload.device_id,
+        component_id=payload.component_id,
+        reported_on=payload.reported_on,
+        repaired_on=payload.repaired_on,
+        reported_issue=payload.reported_issue,
+        repair_action=payload.repair_action,
+        repaired_by=payload.repaired_by,
+        cost=payload.cost,
+        document_path=payload.document_path,
+        notes=payload.notes,
+    )
+    session.add(repair)
+    await session.flush()
+
+    for attachment in payload.attachments:
+        repair.attachments.append(
+            Attachment(file_path=attachment.file_path, description=attachment.description)
+        )
+
+    await session.flush()
+    return repair
+
+
+async def update_repair_log(
+    session: AsyncSession, repair_id: int, payload: RepairLogUpdate
+) -> RepairLog | None:
+    repair = await session.get(RepairLog, repair_id)
+    if not repair:
+        return None
+
+    update_data = payload.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(repair, key, value)
+
+    await session.flush()
+    return repair
+
+
+async def get_repairs_filtered(
+    session: AsyncSession,
+    category_id: Optional[int] = None,
+    serial_number: Optional[str] = None,
+) -> list[RepairLog]:
+    stmt = (
+        select(RepairLog)
+        .join(Device, RepairLog.device_id == Device.id)
+        .join(DeviceType, Device.device_type_id == DeviceType.id)
+    )
+    if category_id:
+        stmt = stmt.where(DeviceType.category_id == category_id)
+    if serial_number:
+        stmt = stmt.where(Device.serial_number == serial_number)
+    stmt = stmt.order_by(RepairLog.reported_on.desc())
+    rows = await session.execute(stmt)
+    return list(rows.scalars().unique())
+
+
+async def get_upcoming_maintenance(
+    session: AsyncSession,
+    days: Optional[int] = None,
+) -> list[MaintenanceWindow]:
+    settings = get_settings()
+    window = days or settings.maintenance_due_window_days
+
+    stmt = (
+        select(
+            SafetyCheck.device_id,
+            SafetyCheck.component_id,
+            Device.inventory_number,
+            SafetyCheck.check_type,
+            SafetyCheck.due_on,
+            DeviceComponent.id,
+            ComponentType.name,
+        )
+        .join(Device, Device.id == SafetyCheck.device_id)
+        .outerjoin(DeviceComponent, DeviceComponent.id == SafetyCheck.component_id)
+        .outerjoin(ComponentType, ComponentType.id == DeviceComponent.component_type_id)
+        .where(SafetyCheck.due_on.is_not(None))
+        .where(SafetyCheck.due_on <= date.today() + timedelta(days=window))
+        .order_by(SafetyCheck.due_on)
+    )
+    rows = await session.execute(stmt)
+
+    results: list[MaintenanceWindow] = []
+    for row in rows:
+        if row.due_on is None:
+            continue
+        days_until_due = (row.due_on - date.today()).days
+        results.append(
+            MaintenanceWindow(
+                device_id=row.device_id,
+                component_id=row.component_id,
+                device_inventory_number=row.inventory_number,
+                check_type=row.check_type,
+                due_on=row.due_on,
+                days_until_due=days_until_due,
+                component_name=row.name,
+            )
+        )
+    return results
+
+
+async def sync_maintenance_alerts(
+    session: AsyncSession, windows: list[MaintenanceWindow]
+) -> list[MaintenanceAlert]:
+    existing = await session.execute(
+        select(MaintenanceAlert).where(MaintenanceAlert.resolved_at.is_(None))
+    )
+    alerts_by_key: dict[tuple[int, Optional[int], str], MaintenanceAlert] = {
+        (alert.device_id, alert.component_id, alert.check_type): alert
+        for alert in existing.scalars()
+    }
+
+    seen_keys: set[tuple[int, Optional[int], str]] = set()
+    updated_alerts: list[MaintenanceAlert] = []
+
+    for window in windows:
+        key = (window.device_id, window.component_id, window.check_type)
+        seen_keys.add(key)
+        severity = "critical" if window.days_until_due < 0 else "warning"
+        message = (
+            f"{window.check_type} fällig für {window.device_inventory_number}"
+            if window.component_name is None
+            else (
+                f"{window.check_type} fällig für {window.device_inventory_number}"
+                f" / {window.component_name}"
+            )
+        )
+        alert = alerts_by_key.get(key)
+        if alert:
+            alert.severity = severity
+            alert.due_on = window.due_on
+            alert.days_until_due = window.days_until_due
+            alert.message = message
+        else:
+            alert = MaintenanceAlert(
+                device_id=window.device_id,
+                component_id=window.component_id,
+                check_type=window.check_type,
+                due_on=window.due_on,
+                severity=severity,
+                days_until_due=window.days_until_due,
+                message=message,
+            )
+            session.add(alert)
+        updated_alerts.append(alert)
+
+    if alerts_by_key:
+        now = datetime.utcnow()
+        for key, alert in alerts_by_key.items():
+            if key not in seen_keys and alert.resolved_at is None:
+                alert.resolved_at = now
+
+    return updated_alerts
+
+
+async def get_active_assignments(
+    session: AsyncSession, vehicle_id: Optional[int] = None
+) -> list[DeviceAssignment]:
+    stmt: Select[tuple[DeviceAssignment]] = select(DeviceAssignment).where(
+        DeviceAssignment.assigned_to.is_(None)
+    )
+    if vehicle_id is not None:
+        stmt = stmt.where(DeviceAssignment.vehicle_id == vehicle_id)
+    stmt = stmt.order_by(DeviceAssignment.assigned_from.desc())
+
+    result = await session.execute(stmt)
+    return list(result.scalars())
+
+
+async def get_device_history(session: AsyncSession, device_id: int) -> dict[str, list]:
+    assignments = await session.execute(
+        select(DeviceAssignment)
+        .where(DeviceAssignment.device_id == device_id)
+        .order_by(DeviceAssignment.assigned_from.desc())
+        .options(selectinload(DeviceAssignment.vehicle))
+    )
+    checks = await session.execute(
+        select(SafetyCheck)
+        .where(SafetyCheck.device_id == device_id)
+        .order_by(SafetyCheck.performed_on.desc())
+        .options(selectinload(SafetyCheck.attachments))
+    )
+    repairs = await session.execute(
+        select(RepairLog)
+        .where(RepairLog.device_id == device_id)
+        .order_by(RepairLog.reported_on.desc())
+        .options(selectinload(RepairLog.attachments))
+    )
+    return {
+        "assignments": list(assignments.scalars()),
+        "safety_checks": list(checks.scalars()),
+        "repairs": list(repairs.scalars()),
+    }
+
+
+async def detach_device(
+    session: AsyncSession, device_id: int, component_id: Optional[int] = None
+) -> None:
+    stmt = (
+        update(DeviceAssignment)
+        .where(
+            DeviceAssignment.device_id == device_id,
+            DeviceAssignment.component_id.is_(component_id),
+            DeviceAssignment.assigned_to.is_(None),
+        )
+        .values(assigned_to=datetime.utcnow())
+    )
+    await session.execute(stmt)
+
+
+async def get_alerts(
+    session: AsyncSession, include_resolved: bool = False
+) -> list[MaintenanceAlert]:
+    stmt = select(MaintenanceAlert)
+    if not include_resolved:
+        stmt = stmt.where(MaintenanceAlert.resolved_at.is_(None))
+    stmt = stmt.order_by(MaintenanceAlert.due_on.asc())
+    rows = await session.execute(stmt)
+    return list(rows.scalars())
+
+
+async def update_alert(
+    session: AsyncSession, alert_id: int, payload: MaintenanceAlertUpdate
+) -> MaintenanceAlert | None:
+    alert = await session.get(MaintenanceAlert, alert_id)
+    if not alert:
+        return None
+    now = datetime.utcnow()
+    if payload.acknowledged:
+        alert.acknowledged_at = now
+    if payload.resolve:
+        alert.resolved_at = now
+    await session.flush()
+    return alert
+
+
+async def _resolve_alerts_for_check(
+    session: AsyncSession, device_id: int, check_type: str, component_id: Optional[int]
+) -> None:
+    stmt = select(MaintenanceAlert).where(
+        MaintenanceAlert.device_id == device_id,
+        MaintenanceAlert.check_type == check_type,
+        MaintenanceAlert.resolved_at.is_(None),
+    )
+    if component_id is None:
+        stmt = stmt.where(MaintenanceAlert.component_id.is_(None))
+    else:
+        stmt = stmt.where(MaintenanceAlert.component_id == component_id)
+    rows = await session.execute(stmt)
+    now = datetime.utcnow()
+    for alert in rows.scalars():
+        alert.resolved_at = now
+
+
+__all__ = [
+    "create_vehicle",
+    "create_device_category",
+    "create_device_type",
+    "create_device",
+    "assign_device",
+    "create_safety_check",
+    "create_repair_log",
+    "update_repair_log",
+    "get_repairs_filtered",
+    "get_upcoming_maintenance",
+    "sync_maintenance_alerts",
+    "get_active_assignments",
+    "get_device_history",
+    "detach_device",
+    "get_alerts",
+    "update_alert",
+]
