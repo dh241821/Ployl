@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
+from app.core.compat import patch_forward_ref_evaluate
+
+patch_forward_ref_evaluate()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

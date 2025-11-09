@@ -39,6 +39,12 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+> **Hinweis für Python 3.12**: Die Abhängigkeiten basieren weiterhin auf Pydantic v1.
+> Während der Startphase patcht `app.core.compat` automatisch das geänderte
+> Forward-Reference-Verhalten von Python 3.12, damit FastAPI problemlos geladen
+> werden kann. Du musst hierfür nichts weiter tun – der Fix greift beim Import
+> der Anwendung.
+
 ### Anwendung starten
 
 ```bash
