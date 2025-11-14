@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Medizinprodukte Cockpit</title>
+    <link rel="manifest" href="/static/manifest.json" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/modern-css-reset/dist/reset.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.10/html5-qrcode.min.js"></script>
+    <script defer src="/static/pwa.js"></script>
+    <style>
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+      }
+
+      body[data-theme="dark"] {
+        background: #12131a;
+        color: #f1f5f9;
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      #offline-indicator {
+        font-size: 0.9rem;
+      }
+
+      #ai-response {
+        min-height: 3rem;
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--muted-border-color, #ccc);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1>Medizinprodukte Cockpit</h1>
+        <p>Browserbasierte Oberfläche mit Echtzeit-Dashboard und QR-Workflows.</p>
+        <div class="toolbar">
+          <button id="theme-toggle" type="button" aria-pressed="false">Dark Mode</button>
+          <span id="offline-indicator" role="status" aria-live="polite">Online</span>
+          <button id="install-btn" type="button" hidden>App installieren</button>
+        </div>
+      </header>
+
+      <section id="login-section">
+        <h2>Anmeldung</h2>
+        <form id="login-form">
+          <label>
+            Benutzername
+            <input type="text" id="username" required />
+          </label>
+          <label>
+            Passwort
+            <input type="password" id="password" required />
+          </label>
+          <button type="submit">Login</button>
+        </form>
+      </section>
+
+      <section id="dashboard" hidden>
+        <h2>Dashboard</h2>
+        <div class="grid">
+          <article>
+            <h3 id="kpi-due">0</h3>
+            <p>Fällige Produkte</p>
+          </article>
+          <article>
+            <h3 id="kpi-repair">0</h3>
+            <p>In Reparatur</p>
+          </article>
+          <article>
+            <h3 id="kpi-expired">0</h3>
+            <p>Material abgelaufen</p>
+          </article>
+          <article>
+            <h3 id="kpi-low-stock">0</h3>
+            <p>Material zu niedrig</p>
+          </article>
+          <article>
+            <h3 id="kpi-maintenance">0</h3>
+            <p>Wartung in 30 Tagen</p>
+          </article>
+        </div>
+        <div class="grid">
+          <article>
+            <canvas id="status-chart"></canvas>
+          </article>
+          <article>
+            <canvas id="repair-chart"></canvas>
+          </article>
+        </div>
+      </section>
+
+      <section id="scanner" hidden>
+        <h2>Scanner</h2>
+        <p>Nutze die Kamera deines Geräts, um QR-/Barcodes einzulesen und Bestände zu aktualisieren.</p>
+        <div id="qr-reader" style="width: 100%; max-width: 420px"></div>
+        <p id="scan-result"></p>
+      </section>
+
+      <section id="notifications" hidden>
+        <h2>Benachrichtigungen</h2>
+        <button id="dispatch-btn">Wartungs-Mails versenden</button>
+        <pre id="notification-output"></pre>
+      </section>
+
+      <section id="ai-assistant" hidden>
+        <h2>KI-Assistent</h2>
+        <form id="ai-form">
+          <label for="ai-prompt">Frage</label>
+          <textarea id="ai-prompt" rows="3" required aria-describedby="ai-hint"></textarea>
+          <small id="ai-hint">Tippe deine Frage ein. Offline-Anfragen werden automatisch synchronisiert.</small>
+          <button type="submit">Antwort abrufen</button>
+        </form>
+        <article id="ai-response" aria-live="polite"></article>
+      </section>
+
+      <section id="iot-section" hidden>
+        <h2>IoT-Sensoren</h2>
+        <p role="status" id="iot-status">Keine Sensoren geladen.</p>
+        <ul id="iot-list"></ul>
+      </section>
+
+      <section id="ar-section" hidden>
+        <h2>AR-Wartungsanleitung</h2>
+        <p>Scanne den Geräte-QR-Code um die AR-Anleitung im Einsatz zu öffnen.</p>
+        <ol id="ar-steps"></ol>
+      </section>
+    </main>
+  </body>
+</html>
