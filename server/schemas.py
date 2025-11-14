@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, validator
 
@@ -27,6 +27,8 @@ class BenutzerBase(BaseModel):
 
 class BenutzerRead(BenutzerBase):
     id: int
+    mfa_enabled: bool
+    sso_subject: Optional[str]
 
     class Config:
         orm_mode = True
@@ -237,3 +239,146 @@ class AuditLogRead(BaseModel):
     benutzername: Optional[str]
     created_at: datetime
     signature_valid: bool
+
+
+class IntegrationRequest(BaseModel):
+    integration: str = Field(regex="^(hl7|fhir|erp|lager)$")
+    payload: Dict[str, Any]
+
+
+class IntegrationResponse(BaseModel):
+    correlation_id: str
+    status: str
+    artifact: Dict[str, Any]
+
+
+class ChatRequest(BaseModel):
+    prompt: str
+    context: Optional[str]
+
+
+class ChatResponse(BaseModel):
+    response: str
+    intent: Optional[str]
+    confidence: float
+
+
+class CategorizationRequest(BaseModel):
+    produkt_id: Optional[int]
+    name: str
+    beschreibung: Optional[str]
+
+
+class CategorizationResponse(BaseModel):
+    suggested_kategorie: str
+    confidence: float
+    rationale: str
+
+
+class AnomalyDetectionRequest(BaseModel):
+    scope: str
+    values: List[float]
+    reference_id: Optional[int]
+    metric: str
+
+
+class AnomalyDetectionResponse(BaseModel):
+    anomaly: bool
+    score: float
+    threshold: float
+    details: str
+
+
+class MFASetupResponse(BaseModel):
+    secret: str
+    otpauth_url: str
+
+
+class MFAEnableRequest(BaseModel):
+    secret: str
+    code: str
+
+
+class MFADisableRequest(BaseModel):
+    code: str
+
+
+class SSOInitiateResponse(BaseModel):
+    authorization_url: str
+
+
+class SSOCallbackRequest(BaseModel):
+    code: str
+    state: str
+
+
+class OfflineChangeCreate(BaseModel):
+    entity_type: str
+    payload: Dict[str, Any]
+    checksum: str
+
+
+class OfflineSyncResponse(BaseModel):
+    queued: int
+    synced: int
+
+
+class SensorDeviceCreate(BaseModel):
+    name: str
+    location: Optional[str]
+    sensor_type: str
+    metadata: Optional[Dict[str, Any]]
+
+
+class SensorDeviceRead(BaseModel):
+    id: int
+    name: str
+    location: Optional[str]
+    sensor_type: str
+    metadata: Optional[Dict[str, Any]]
+
+    class Config:
+        orm_mode = True
+
+
+class SensorReadingCreate(BaseModel):
+    metric: str
+    value: float
+    unit: Optional[str]
+    recorded_at: Optional[datetime]
+
+
+class SensorAlert(BaseModel):
+    metric: str
+    value: float
+    threshold: float
+    message: str
+
+
+class InventoryForecastRead(BaseModel):
+    material_id: int
+    horizon_days: int
+    predicted_on: date
+    stockout_probability: float
+    recommended_order_date: date
+    model_version: str
+
+    class Config:
+        orm_mode = True
+
+
+class LedgerEntryRequest(BaseModel):
+    payload: Dict[str, Any]
+
+
+class LedgerVerification(BaseModel):
+    valid: bool
+    entries: int
+    message: str
+
+
+class ArInstructionRead(BaseModel):
+    produkt_id: Optional[int]
+    title: str
+    steps: List[str]
+    asset_url: Optional[str]

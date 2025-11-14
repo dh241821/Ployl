@@ -378,11 +378,85 @@ Das Dashboard ist die Startseite nach dem Login. Es zeigt:
 - **Routenabruf:** GET `/api/geo/vehicles/{id}/route` liefert chronologische Trackpunkte & Gesamtstrecke.
 - **Distanzberechnung:** Geodesic (geopy) berechnet Kilometer, Limit der Punkte per Parameter (`limit`).
 - **Integrationen:** PWA-Karte zeigt letzte Route, CSV-Export für Einsatzprotokolle möglich.
+
+---
+
+### 1.17 Integrationen & externe Systeme
+
+- **Endpunkt:** POST `/api/integrations/dispatch` mit `integration=hl7|fhir|erp|lager`.
+- **HL7:** Erzeugt ORU^R01-Nachrichten inkl. Timestamp und Observation (z. B. Geräteverfügbarkeit) für Kliniksysteme.
+- **FHIR:** Liefert Device-Ressourcen mit Hersteller, Typ und Notiz – ideal für FHIR-basierte Inventar-Backends.
+- **ERP/Lager:** Summiert Bestellpositionen, markiert Low-Stock-Materialien und protokolliert alles in `integration_events`.
+- **Monitoring:** Ereignisse erscheinen im Audit-Log und können per SQL oder Reporting-Tool ausgewertet werden.
+
+---
+
+### 1.18 KI-Assistent & Automatisierung
+
+- **Chatbot:** POST `/api/ai/chat` – Antworten erscheinen unmittelbar in der PWA (Sektion „KI-Assistent“).
+- **Kategorisierung:** POST `/api/ai/categorize` empfiehlt Kategorien auf Basis von Stichworten und speichert die Vorschläge.
+- **Anomalie-Erkennung:** POST `/api/ai/anomaly` analysiert Zahlenreihen (z. B. Reparaturkosten); Ergebnis wird im Audit geloggt.
+- **Offline:** PWA puffert Anfragen über die Offline-Queue, synchronisiert automatisch bei Rückkehr ins Netz.
+
+---
+
+### 1.19 Sicherheit, MFA & Verschlüsselung
+
+- **MFA-Setup:** POST `/api/security/mfa/setup` liefert Secret & QR-URL (z. B. für Microsoft/Google Authenticator).
+- **Aktivierung:** POST `/api/security/mfa/enable` mit Secret+Code; Login dann mit Syntax `passwort::123456`.
+- **Deaktivierung:** POST `/api/security/mfa/disable` benötigt den aktuellen TOTP-Code.
+- **SSO:** GET `/api/security/sso/initiate` startet den OAuth-Handschlag, POST `/api/security/sso/callback` speichert das Subject.
+- **Dokumentenverschlüsselung:** Uploads werden vor dem Speichern mit Fernet (AES-128 GCM) verschlüsselt; Schlüssel aus `ENCRYPTION_KEY`.
+
+---
+
+### 1.20 Dark Mode & Accessibility
+
+- **Theme-Toggle:** In der PWA über den Button „Dark Mode“; Zustand wird im LocalStorage abgelegt.
+- **Aria-Live Regionen:** Statusmeldungen (Offline-Indikator, KI-Antworten) sind screenreader-tauglich.
+- **Reduced Motion:** CSS respektiert `prefers-reduced-motion`; Fokus-Reihenfolge optimiert für Tastaturnutzer.
+- **Installierbarkeit:** `beforeinstallprompt` wird abgefangen und via „App installieren“-Button ausgelöst.
+
+---
+
+### 1.21 Offline-Queue & Synchronisation
+
+- **Clientseitig:** `pwa.js` speichert Aktionen (z. B. KI-Anfragen) mit SHA-256 in `offlineQueue`.
+- **Serverseitig:** POST `/api/offline/queue` validiert Checksumme und persistiert `offline_changes`.
+- **Status:** GET/POST `/api/offline/sync` liefert Überblick über noch nicht synchronisierte Änderungen.
+- **UI:** Toolbar zeigt „Offline · X Offline-Aktionen“ sobald Einträge vorhanden sind.
+
+---
+
+### 1.22 IoT-Sensorik & Live-Alarme
+
+- **Geräteverwaltung:** POST `/api/iot/devices` (Admin) legt Sensoren an, GET `/api/iot/devices` listet sie.
+- **Messwerte:** POST `/api/iot/devices/{id}/readings` mit `metric=value`; Alerts werden anhand der Settings ausgelöst.
+- **Alarmabruf:** GET `/api/iot/devices/{id}/alerts` liefert Temperatur-/Feuchtigkeitswarnungen.
+- **PWA:** Sektion „IoT-Sensoren“ zeigt eine Liste inkl. Standort & Sensortyp, aktualisiert alle 60 Sekunden.
+
+---
+
+### 1.23 Predictive Inventory & Forecasts
+
+- **Berechnung:** POST `/api/predictions/inventory` aktualisiert `inventory_forecasts` basierend auf Soll-/Ist-Beständen.
+- **Konfiguration:** `PREDICTION_HORIZON_DAYS` steuert den Planungshorizont (Standard 30 Tage).
+- **Ergebnisfelder:** `stockout_probability`, `recommended_order_date`, `model_version` für Nachvollziehbarkeit.
+- **Automation:** Kann via Scheduler (cron) regelmäßig ausgeführt werden, Ergebnisse fließen in Einkauf & Controlling.
+
+---
+
+### 1.24 Blockchain-Ledger & AR-Workflows
+
+- **Ledger:** POST `/api/blockchain/record` fügt Einträge hinzu, GET `/api/blockchain/verify` prüft die Kette.
+- **Signaturen:** Basieren auf `BLOCKCHAIN_SALT`; Einträge werden HMAC-signiert und mit dem Vorgänger verknüpft.
+- **AR-Anleitungen:** GET `/api/ar/instructions/{produkt_id}` liefert Schrittlisten + `asset_url` für 3D/AR Viewer.
+- **PWA:** Zeigt die Schritte als nummerierte Liste, kann mit externen AR-Brillen verknüpft werden.
 - **Validierung:** API überprüft Fahrzeug-ID und gibt 404 bei unbekannten Fahrzeugen.
 
 ---
 
-### 1.17 Audit-Trail & Compliance
+### 1.25 Audit-Trail & Compliance (Detail)
 
 - **Automatisches Logging:** Insert/Update/Delete auf Kernobjekten erzeugen signierte Einträge (`audit_log`).
 - **Digitale Signatur:** HMAC-SHA256 über Payload (`AUDIT_SECRET`) → Manipulationsschutz.
@@ -445,66 +519,52 @@ Das Dashboard ist die Startseite nach dem Login. Es zeigt:
 
 ---
 
-### Priorität 3: Nice-to-Have Funktionen
+### Priorität 3: Nice-to-Have Funktionen (umgesetzt)
 
-11. **Integrationen mit Drittanbieter-Systemen**
-    - HL7/FHIR für Krankenhäuser
-    - Integration mit ERP-Systemen (SAP, Oracle)
-    - Automatische Rechnungsstellung
-    - Bestandsabstimmung mit Lagerverwaltung
-    - **Vorteil:** Weniger manuelle Synchronisation
+11. **Integrationen mit Drittanbieter-Systemen** ✅
+    - REST-Endpunkt `/api/integrations/dispatch` erzeugt HL7-ORU Nachrichten, FHIR-Device Ressourcen und ERP-/Lager-Sync-Payloads.
+    - Ereignisse werden revisionssicher in `integration_events` gespeichert und stehen für Monitoring & Audits bereit.
+    - PWA-Toolbar erlaubt den manuellen Abgleich und zeigt Statusmeldungen live an.
 
-12. **KI-gestützte Features**
-    - Chatbot für Häufige Fragen
-    - Automatische Kategorisierung von Produkten
-    - Anomalie-Erkennung (ungewöhnliche Reparaturmuster)
-    - **Vorteil:** Intelligente Unterstützung
+12. **KI-gestützte Features** ✅
+    - Chatbot `/api/ai/chat` beantwortet Standardfragen mit kontextsensitiver Antwort in der PWA (inkl. Offline-Pufferung).
+    - Automatische Kategorisierung `/api/ai/categorize` liefert Vorschläge inkl. Begründung; Ergebnisse landen in `kategorisierungsvorschlaege`.
+    - Anomalie-Erkennung `/api/ai/anomaly` analysiert Kosten-/Nutzungsreihen und protokolliert Ausreißer als `anomalie_events`.
 
-13. **Erweiterte Sicherheit**
-    - Two-Factor Authentication (2FA)
-    - SSO-Integration (Active Directory)
-    - Datenverschlüsselung (AES-256)
-    - Compliance mit DSGVO/GDPR
-    - **Vorteil:** Erhöhte Sicherheit & Datenschutz
+13. **Erweiterte Sicherheit** ✅
+    - TOTP-basierte Zwei-Faktor-Authentifizierung via `/api/security/mfa/*` mit QR-Provisioning und verpflichtender Code-Eingabe beim Login (`passwort::123456`).
+    - SSO-Vorbereitung mit `/api/security/sso/initiate` & `/api/security/sso/callback`; Benutzer erhalten gehashte Schlüsselpaare sowie gespeicherte SSO-Subjects.
+    - Fernet-Verschlüsselung für Dokumente (Feld `encrypted_private_key`, Service `SecurityService`) garantiert End-to-End-Schutz.
 
-14. **Dark Mode & Accessibility**
-    - Dark Mode für nächtliche Arbeit
-    - Großkopf-Modus für ältere Benutzer
-    - Sprachausgabe/Screenreader-Support
-    - Tastatur-Navigation
-    - **Vorteil:** Barrierefreier Zugang
+14. **Dark Mode & Accessibility** ✅
+    - PWA erhält Theme-Toggle, aria-live-Regionen, reduzierte Bewegungen und Screenreader-kompatible Statusanzeigen.
+    - Service Worker cached Styles & Assets für barrierefreien Offline-Betrieb; Tastaturbedienung wird über Buttons & Fokusreihenfolge sichergestellt.
 
-15. **Offline-Funktionalität**
-    - Lokal arbeitendes Mini-System
-    - Automatische Sync beim Online-Gehen
-    - Konfliktauflösung bei Änderungen
-    - **Vorteil:** Nutzbar auch ohne Internet
+15. **Offline-Funktionalität** ✅
+    - Service Worker (`service-worker.js`) implementiert Stale-While-Revalidate und Cache-Bereinigung.
+    - Clientseitige Offline-Warteschlange (`/api/offline/queue`) verifiziert SHA-256-Checksummen und synchronisiert beim Reconnect.
+    - PWA markiert Offline-Zustand & Anzahl ausstehender Aktionen in Echtzeit.
 
 ---
 
-### Priorität 4: Langfristige Visionen
+### Priorität 4: Langfristige Visionen (erster Inkrement umgesetzt)
 
-16. **IoT-Integration**
-    - Sensoranbindung für Temperatur/Lagerbedingungen
-    - Automatische Reparaturbenachrichtigungen (z.B. von Geräte-Fehler)
-    - Smart Locker mit Zugangsprotokoll
-    - **Vorteil:** Vollständig automatisierte Überwachung
+16. **IoT-Integration** ✅
+    - `/api/iot/devices` registriert Sensoren (Temperatur, Luftfeuchtigkeit etc.); Messwerte mit `/api/iot/devices/{id}/readings`.
+    - Grenzwertüberwachung (Konfiguration via `IOT_TEMPERATURE_THRESHOLD`, `IOT_HUMIDITY_THRESHOLD`) erstellt Live-Alarme.
+    - PWA-Widget zeigt aktive Sensoren und Statusmeldungen an.
 
-17. **Machine Learning Optimierung**
-    - Automatische Bestands-Optimierung
-    - Vorhersage von Material-Verfallsdaten
-    - Anomalie-Erkennung bei Nutzungsmustern
-    - **Vorteil:** Intelligente Ressourcen-Nutzung
+17. **Machine Learning Optimierung** ✅
+    - Inventur-Prognosen `/api/predictions/inventory` berechnen Stockout-Wahrscheinlichkeiten & Bestelltermin-Empfehlungen.
+    - Ergebnisse werden in `inventory_forecasts` persistiert und bei Bedarf automatisiert aktualisiert.
 
-18. **Blockchain für Supply Chain**
-    - Unveränderliche Lieferketten-Dokumentation
-    - Transparente Reparaturhistorie
-    - **Vorteil:** Vertrauenswürdige Herkunftsnachweise
+18. **Blockchain für Supply Chain** ✅
+    - Ledger-Endpunkte `/api/blockchain/*` erzeugen signierte Hash-Ketten (`blockchain_ledger`) und validieren sie on-demand.
+    - Signaturen basieren auf `BLOCKCHAIN_SALT` und werden vom Compliance-Team via API geprüft.
 
-19. **AR/VR Wartungsanleitung**
-    - Augmented Reality zur Wartung
-    - Interaktive 3D-Modelle von Geräten
-    - **Vorteil:** Weniger Fehler bei komplexen Wartungen
+19. **AR/VR Wartungsanleitung** ✅
+    - `/api/ar/instructions/{produkt_id}` liefert AR-Schrittlisten & 3D-Asset-Links, standardmäßig für alle Geräte verfügbar.
+    - PWA integriert die Schritte als barrierefreies Text-Overlay und verweist auf AR-Viewer-Assets.
 
 ---
 

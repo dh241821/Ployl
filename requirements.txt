@@ -19,3 +19,5 @@ Pillow
 pytesseract
 python-multipart
 geopy
+pyotp
+cryptography

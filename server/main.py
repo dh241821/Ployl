@@ -20,6 +20,14 @@ from .routers import costs as costs_router
 from .routers import documents as documents_router
 from .routers import geotracking as geotracking_router
 from .routers import audit as audit_router
+from .routers import integrations as integrations_router
+from .routers import ai as ai_router
+from .routers import security as security_router
+from .routers import iot as iot_router
+from .routers import offline as offline_router
+from .routers import blockchain as blockchain_router
+from .routers import predictions as predictions_router
+from .routers import ar as ar_router
 from .services.audit import configure_audit_events
 from .services.scheduler import register_scheduler
 
@@ -66,6 +74,14 @@ app.include_router(costs_router.router)
 app.include_router(documents_router.router)
 app.include_router(geotracking_router.router)
 app.include_router(audit_router.router)
+app.include_router(integrations_router.router)
+app.include_router(ai_router.router)
+app.include_router(security_router.router)
+app.include_router(iot_router.router)
+app.include_router(offline_router.router)
+app.include_router(blockchain_router.router)
+app.include_router(predictions_router.router)
+app.include_router(ar_router.router)
 
 register_scheduler(app)
 

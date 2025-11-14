@@ -10,4 +10,12 @@ __all__ = [
     "documents",
     "geotracking",
     "audit",
+    "integrations",
+    "ai",
+    "security",
+    "iot",
+    "offline",
+    "blockchain",
+    "predictions",
+    "ar",
 ]

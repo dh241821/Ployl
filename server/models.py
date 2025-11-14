@@ -24,6 +24,11 @@ class Benutzer(TimestampMixin, Base):
     full_name = Column(String(100), nullable=False)
     role = Column(String(20), nullable=False, default="benutzer")
     email = Column(String(120), nullable=True)
+    mfa_secret = Column(String(32))
+    mfa_enabled = Column(Boolean, default=False, nullable=False)
+    sso_subject = Column(String(120))
+    public_key = Column(Text)
+    encrypted_private_key = Column(Text)
 
 
 class Kategorie(Base):
@@ -281,3 +286,118 @@ class AuditLog(Base):
     benutzername = Column(String(120))
     signature = Column(String(128), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class IntegrationEvent(TimestampMixin, Base):
+    __tablename__ = "integration_events"
+
+    id = Column(Integer, primary_key=True)
+    integration_type = Column(String(50), nullable=False)
+    status = Column(String(40), nullable=False, default="pending")
+    payload = Column(Text, nullable=False)
+    response = Column(Text)
+    correlation_id = Column(String(64), unique=True, nullable=False)
+
+
+class ChatConversation(TimestampMixin, Base):
+    __tablename__ = "chat_conversations"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("benutzer.id"))
+    prompt = Column(Text, nullable=False)
+    response = Column(Text, nullable=False)
+    intent = Column(String(80))
+    confidence = Column(Float)
+
+
+class CategorizationSuggestion(TimestampMixin, Base):
+    __tablename__ = "kategorisierungsvorschlaege"
+
+    id = Column(Integer, primary_key=True)
+    produkt_id = Column(Integer, ForeignKey("produkte.id"), nullable=False)
+    suggested_kategorie = Column(String(120), nullable=False)
+    confidence = Column(Float, nullable=False)
+    rationale = Column(Text)
+
+    produkt = relationship("Produkt")
+
+
+class AnomalyEvent(TimestampMixin, Base):
+    __tablename__ = "anomalie_events"
+
+    id = Column(Integer, primary_key=True)
+    scope = Column(String(80), nullable=False)
+    reference_id = Column(Integer)
+    metric = Column(String(80), nullable=False)
+    score = Column(Float, nullable=False)
+    details = Column(Text)
+
+
+class OfflineChange(TimestampMixin, Base):
+    __tablename__ = "offline_changes"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("benutzer.id"))
+    entity_type = Column(String(80), nullable=False)
+    payload = Column(Text, nullable=False)
+    synced = Column(Boolean, default=False, nullable=False)
+    checksum = Column(String(64), nullable=False)
+
+
+class SensorDevice(TimestampMixin, Base):
+    __tablename__ = "sensor_devices"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(120), nullable=False)
+    location = Column(String(120))
+    sensor_type = Column(String(80), nullable=False)
+    details = Column(Text)
+
+
+class SensorReading(TimestampMixin, Base):
+    __tablename__ = "sensor_readings"
+
+    id = Column(Integer, primary_key=True)
+    device_id = Column(Integer, ForeignKey("sensor_devices.id"), nullable=False)
+    metric = Column(String(80), nullable=False)
+    value = Column(Float, nullable=False)
+    unit = Column(String(20))
+    recorded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    device = relationship("SensorDevice")
+
+
+class InventoryForecast(TimestampMixin, Base):
+    __tablename__ = "inventory_forecasts"
+
+    id = Column(Integer, primary_key=True)
+    material_id = Column(Integer, ForeignKey("verbrauchsmaterial.id"), nullable=False)
+    horizon_days = Column(Integer, nullable=False)
+    predicted_on = Column(Date, nullable=False)
+    stockout_probability = Column(Float, nullable=False)
+    recommended_order_date = Column(Date, nullable=False)
+    model_version = Column(String(40), nullable=False)
+
+    material = relationship("Material")
+
+
+class LedgerEntry(TimestampMixin, Base):
+    __tablename__ = "blockchain_ledger"
+
+    id = Column(Integer, primary_key=True)
+    previous_hash = Column(String(128))
+    record_hash = Column(String(128), nullable=False)
+    payload = Column(Text, nullable=False)
+    signature = Column(String(128), nullable=False)
+
+
+class ArInstruction(TimestampMixin, Base):
+    __tablename__ = "ar_instructions"
+
+    id = Column(Integer, primary_key=True)
+    produkt_id = Column(Integer, ForeignKey("produkte.id"))
+    title = Column(String(120), nullable=False)
+    steps = Column(Text, nullable=False)
+    asset_url = Column(String(255))
+
+    produkt = relationship("Produkt")

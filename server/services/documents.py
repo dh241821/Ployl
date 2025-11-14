@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from pathlib import Path
 from typing import Iterable, List, Optional
 
@@ -15,6 +16,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 from ..config import settings
 from ..models import Dokument
+from .security import SecurityService
 
 
 class DocumentService:
@@ -24,6 +26,7 @@ class DocumentService:
         self.session = session
         self.storage_dir = storage_dir or Path("storage/documents")
         self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self.security = SecurityService(session)
 
     def save_document(
         self,
@@ -39,11 +42,13 @@ class DocumentService:
         storage_name = hashlib.sha1(payload).hexdigest()
         extension = Path(filename).suffix
         target_path = self.storage_dir / f"{storage_name}{extension}"
-        target_path.write_bytes(payload)
 
-        ocr_text = self._extract_text(target_path)
+        ocr_text = self._extract_text(payload)
         checksum = hashlib.sha256(payload).hexdigest()
         cloud_url = self._build_cloud_url(target_path.name)
+
+        encrypted_payload = self.security.encrypt_bytes(payload)
+        target_path.write_bytes(encrypted_payload)
 
         dokument = Dokument(
             titel=titel,
@@ -72,11 +77,12 @@ class DocumentService:
                 queryset = queryset.filter(Dokument.tags.ilike(f"%{tag}%"))
         return queryset.order_by(Dokument.created_at.desc()).all()
 
-    def _extract_text(self, path: Path) -> str:
+    def _extract_text(self, payload: bytes) -> str:
         if not pytesseract:
             return ""
         try:
-            image = Image.open(path)
+            stream = io.BytesIO(payload)
+            image = Image.open(stream)
         except Exception:  # pragma: no cover - fallback for unsupported formats
             return ""
         text = pytesseract.image_to_string(image, lang=settings.ocr_languages)

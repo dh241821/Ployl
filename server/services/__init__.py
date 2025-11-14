@@ -8,4 +8,12 @@ __all__ = [
     "documents",
     "geo",
     "audit",
+    "security",
+    "integrations",
+    "ai",
+    "iot",
+    "offline",
+    "blockchain",
+    "predictions",
+    "ar",
 ]

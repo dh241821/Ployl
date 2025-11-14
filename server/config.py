@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     ocr_languages: str = Field(default="deu+eng", env="OCR_LANGUAGES")
     geo_route_profile: str = Field(default="driving", env="GEO_ROUTE_PROFILE")
     maintenance_model_version: str = Field(default="1.0.0", env="MAINTENANCE_MODEL_VERSION")
+    encryption_key: Optional[str] = Field(default=None, env="ENCRYPTION_KEY")
+    mfa_issuer: str = Field(default="Medizinprodukte", env="MFA_ISSUER")
+    sso_client_id: Optional[str] = Field(default=None, env="SSO_CLIENT_ID")
+    sso_client_secret: Optional[str] = Field(default=None, env="SSO_CLIENT_SECRET")
+    blockchain_salt: str = Field(default="med-chain", env="BLOCKCHAIN_SALT")
+    offline_cache_dir: str = Field(default="storage/offline", env="OFFLINE_CACHE_DIR")
+    iot_temperature_threshold: float = Field(default=8.0, env="IOT_TEMPERATURE_THRESHOLD")
+    iot_humidity_threshold: float = Field(default=70.0, env="IOT_HUMIDITY_THRESHOLD")
+    prediction_horizon_days: int = Field(default=30, env="PREDICTION_HORIZON_DAYS")
 
     class Config:
         env_file = ".env"
