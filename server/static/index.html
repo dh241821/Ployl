@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Medizinprodukte Cockpit</title>
+    <link rel="manifest" href="/static/manifest.json" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/modern-css-reset/dist/reset.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.10/html5-qrcode.min.js"></script>
+    <script defer src="/static/pwa.js"></script>
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1>Medizinprodukte Cockpit</h1>
+        <p>Browserbasierte Oberfläche mit Echtzeit-Dashboard und QR-Workflows.</p>
+      </header>
+
+      <section id="login-section">
+        <h2>Anmeldung</h2>
+        <form id="login-form">
+          <label>
+            Benutzername
+            <input type="text" id="username" required />
+          </label>
+          <label>
+            Passwort
+            <input type="password" id="password" required />
+          </label>
+          <button type="submit">Login</button>
+        </form>
+      </section>
+
+      <section id="dashboard" hidden>
+        <h2>Dashboard</h2>
+        <div class="grid">
+          <article>
+            <h3 id="kpi-due">0</h3>
+            <p>Fällige Produkte</p>
+          </article>
+          <article>
+            <h3 id="kpi-repair">0</h3>
+            <p>In Reparatur</p>
+          </article>
+          <article>
+            <h3 id="kpi-expired">0</h3>
+            <p>Material abgelaufen</p>
+          </article>
+          <article>
+            <h3 id="kpi-low-stock">0</h3>
+            <p>Material zu niedrig</p>
+          </article>
+          <article>
+            <h3 id="kpi-maintenance">0</h3>
+            <p>Wartung in 30 Tagen</p>
+          </article>
+        </div>
+        <div class="grid">
+          <article>
+            <canvas id="status-chart"></canvas>
+          </article>
+          <article>
+            <canvas id="repair-chart"></canvas>
+          </article>
+        </div>
+      </section>
+
+      <section id="scanner" hidden>
+        <h2>Scanner</h2>
+        <p>Nutze die Kamera deines Geräts, um QR-/Barcodes einzulesen und Bestände zu aktualisieren.</p>
+        <div id="qr-reader" style="width: 100%; max-width: 420px"></div>
+        <p id="scan-result"></p>
+      </section>
+
+      <section id="notifications" hidden>
+        <h2>Benachrichtigungen</h2>
+        <button id="dispatch-btn">Wartungs-Mails versenden</button>
+        <pre id="notification-output"></pre>
+      </section>
+    </main>
+  </body>
+</html>

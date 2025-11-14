@@ -1,3 +1,14 @@
 ttkbootstrap
 matplotlib
 qrcode[pil]
+fastapi
+uvicorn[standard]
+sqlalchemy>=2.0
+psycopg[binary]
+pymysql
+passlib[bcrypt]
+python-jose[cryptography]
+pydantic
+apscheduler
+ics
+aiosmtplib

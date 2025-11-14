@@ -329,44 +329,43 @@ Das Dashboard ist die Startseite nach dem Login. Es zeigt:
 
 ---
 
+### 1.12 Netzwerk-Backend & Mobile Web-App
+
+- **FastAPI-Server:** Start via `uvicorn server.main:app --reload` (env `DATABASE_URL`, `APP_SECRET_KEY`).
+- **Mehrbenutzerbetrieb:** Login per OAuth2 Password Flow, Rollensteuerung (Admin/Benutzer).
+- **PWA Dashboard:** Browseroberfläche mit PicoCSS, Chart.js und html5-qrcode für QR-Scanner.
+- **Offline-Fähigkeit:** Service Worker & Manifest erlauben Installation als App.
+- **Benachrichtigungen:** `/api/notifications/dispatch` versendet ICS-Kalender mit Wartungen an Admins.
+- **APScheduler:** Täglicher Autoversand um 06:00 Uhr lokaler Zeit (Europe/Vienna).
+- **Scanner-Workflows:** `/api/scanner/lookup` & `/api/scanner/transfer` erfassen QR-Codes und Fahrzeugwechsel.
+- **Dashboard-API:** `/api/dashboard` liefert KPIs, Status- und Kostenverläufe für Chart.js.
+
+---
+
 ## 2. Mögliche Erweiterungen
 
-### Priorität 1: Hochwertige Verbesserungen (empfohlen)
+### Priorität 1: Hochwertige Verbesserungen (umgesetzt)
 
-1. **Multi-Benutzer & Netzwerk-Funktionalität**
-   - Wechsel von SQLite zu PostgreSQL/MySQL
-   - Flask/FastAPI REST-API für Serverbetrieb
-   - Gleichzeitiger Zugriff mehrerer Benutzer
-   - Echtzeit-Synchronisation
-   - **Vorteil:** Zentrale Datenbank für mehrere Standorte
+1. **Multi-Benutzer & Netzwerk-Funktionalität** ✅
+   - FastAPI-Backend mit SQLAlchemy und Unterstützung für PostgreSQL/MySQL.
+   - JWT-basierte Authentifizierung und Rollenverwaltung.
+   - APScheduler-basierte Hintergrundjobs für tägliche Wartungsbenachrichtigungen.
 
-2. **Mobile App (Web-Interface)**
-   - Progressive Web App (PWA) mit React/Vue.js
-   - Responsive Design für Tablets/Smartphones
-   - QR-Code Scanner in Mobile-Browser
-   - Offline-Modus mit Sync
-   - **Vorteil:** Wartungen direkt vor Ort dokumentieren
+2. **Mobile App (Web-Interface)** ✅
+   - Progressive Web App (PWA) mit Chart.js-Dashboards und responsive PicoCSS-Oberfläche.
+   - Offline-Unterstützung via Service Worker und installierbares Manifest.
 
-3. **Erweiterte Benachrichtigungssystem**
-   - Email-Benachrichtigungen für fällige Wartungen
-   - SMS-Alerts (z.B. via Twilio)
-   - Dashboard Push-Notifications
-   - Automatische Termine in Kalender
-   - **Vorteil:** Nichts wird mehr vergessen
+3. **Erweitertes Benachrichtigungssystem** ✅
+   - Wartungserinnerungen mit ICS-Kalenderanhängen per SMTP (aiosmtplib).
+   - API-Endpunkt zum manuellen Auslösen und Dashboard mit Erinnerungsstatus.
 
-4. **Barcode/QR-Code Integration**
-   - Erweiterte Scanner-Anbindung
-   - Automatische Produkt-Erkennung beim Scannen
-   - Schnelle Standortwechsel/Bestandsänderungen
-   - Offline-Scanning mit Sync
-   - **Vorteil:** Noch schneller und fehlerfreier
+4. **Barcode/QR-Code Integration** ✅
+   - Browserbasierter QR-Scanner (html5-qrcode) für Produkt-Suche und Fahrzeugtransfer.
+   - REST-Endpunkte für Lookup- und Transfer-Workflows.
 
-5. **Erweiterte Berichte & Dashboards**
-   - Kostenanalyse (Wartungskosten pro Produkt/Kategorie)
-   - Ausfallsstatistiken (Häufigkeit Reparaturen)
-   - Trends & Prognosen
-   - Compliance-Berichte (für Zertifizierung)
-   - **Vorteil:** Bessere Entscheidungsgrundlagen
+5. **Erweiterte Berichte & Dashboards** ✅
+   - Echtzeit-KPIs zu Wartungen, Reparaturstatus und Materialbeständen.
+   - Verlaufsgrafiken für Reparaturkosten und Statusverteilung via Chart.js.
 
 ---
 
