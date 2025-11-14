@@ -13,7 +13,7 @@ import sqlite3
 import ttkbootstrap as ttkb
 from ttkbootstrap.constants import BOTH, LEFT, RIGHT, W
 from ttkbootstrap.dialogs import Messagebox
-from ttkbootstrap.tableview import Tableview
+from ttkbootstrap.widgets.tableview import Tableview
 
 from app.database import DatabaseManager, User
 
@@ -193,8 +193,6 @@ class DashboardView(ttkb.Frame):
         self.dark_mode = dark_mode
         background = "#111827" if dark_mode else "#f8f9fa"
         foreground = "#e2e8f0" if dark_mode else "#1f2937"
-        for widget in [self, self.kpi_frame, self.tables_frame]:
-            widget.configure(background=background)
         self.figure.patch.set_facecolor(background)
         self.ax.set_facecolor(background)
         self.ax.tick_params(colors=foreground)
@@ -3347,12 +3345,11 @@ class MedizinprodukteApp(ttkb.Window):
             self.db.set_user_preference(self.user.id, "theme", self.current_theme)
 
     def _setup_styles(self) -> None:
-        card_bg = "#1f2933" if self.current_theme in self._dark_themes() else "#ffffff"
         card_fg = "#f8fafc" if self.current_theme in self._dark_themes() else "#1f2937"
         accent = "#6366f1" if self.current_theme in self._dark_themes() else "#2563eb"
-        self.style.configure("KpiCard.TFrame", background=card_bg, borderwidth=1, relief="ridge")
-        self.style.configure("KpiTitle.TLabel", background=card_bg, foreground=accent, font=("Inter", 11, "bold"))
-        self.style.configure("KpiValue.TLabel", background=card_bg, foreground=card_fg, font=("Inter", 26, "bold"))
+        self.style.configure("KpiCard.TFrame", borderwidth=1, relief="ridge")
+        self.style.configure("KpiTitle.TLabel", foreground=accent, font=("Inter", 11, "bold"))
+        self.style.configure("KpiValue.TLabel", foreground=card_fg, font=("Inter", 26, "bold"))
 
     def _apply_font_scale(self, scale: float, persist: bool = True) -> None:
         if scale <= 0:
