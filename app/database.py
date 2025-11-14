@@ -645,6 +645,39 @@ class DatabaseManager:
             )
         return int(cur.lastrowid)
 
+    def get_location(self, location_id: int) -> Optional[sqlite3.Row]:
+        return self.connection.execute(
+            "SELECT * FROM standorte WHERE id = ?",
+            (location_id,),
+        ).fetchone()
+
+    def update_location(
+        self,
+        location_id: int,
+        land: str,
+        bereich: str,
+        bezirk: str,
+        bezirksstelle: str,
+        ortsstelle: str,
+        beschreibung: str,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE standorte
+                SET land = ?, bereich = ?, bezirk = ?, bezirksstelle = ?, ortsstelle = ?, beschreibung = ?
+                WHERE id = ?
+                """,
+                (land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung, location_id),
+            )
+
+    def delete_location(self, location_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM standorte WHERE id = ?",
+                (location_id,),
+            )
+
     # ------------------------------------------------------------------
     # contacts
     # ------------------------------------------------------------------

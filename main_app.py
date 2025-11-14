@@ -18,7 +18,7 @@ from ttkbootstrap.widgets.tableview import Tableview
 from app.database import DatabaseManager, User
 
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, font as tkfont
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
@@ -215,6 +215,15 @@ class ProductsView(ttkb.Frame):
         ttkb.Button(toolbar, text="Neu", command=self.create_product, bootstyle="success").pack(side=LEFT)
         ttkb.Button(toolbar, text="Bearbeiten", command=self.edit_product, bootstyle="secondary").pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="Ausscheiden", command=self.retire_product, bootstyle="danger").pack(side=LEFT)
+        ttkb.Button(toolbar, text="Komponenten", command=self.open_components, bootstyle="info").pack(
+            side=LEFT, padx=5
+        )
+        ttkb.Button(toolbar, text="Wartungen", command=self.open_maintenance, bootstyle="info").pack(
+            side=LEFT
+        )
+        ttkb.Button(toolbar, text="Reparaturen", command=self.open_repairs, bootstyle="info").pack(
+            side=LEFT, padx=5
+        )
         ttkb.Button(toolbar, text="Export CSV", command=self.export_products, bootstyle="info").pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="Lebenslauf", command=self.export_lifecycle, bootstyle="info").pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="Liste HTML", command=self.export_html, bootstyle="primary").pack(side=LEFT, padx=5)
@@ -327,6 +336,24 @@ class ProductsView(ttkb.Frame):
         if not product_id:
             return
         editor = ProductEditor(self, self.db, produkt_id=product_id)
+        self.wait_window(editor)
+        if editor.saved:
+            self.refresh()
+
+    def open_components(self) -> None:
+        self._open_product_tab("components")
+
+    def open_maintenance(self) -> None:
+        self._open_product_tab("maintenance")
+
+    def open_repairs(self) -> None:
+        self._open_product_tab("repairs")
+
+    def _open_product_tab(self, tab_name: str) -> None:
+        product_id = self.selected_product_id()
+        if not product_id:
+            return
+        editor = ProductEditor(self, self.db, produkt_id=product_id, initial_tab=tab_name)
         self.wait_window(editor)
         if editor.saved:
             self.refresh()
@@ -750,7 +777,13 @@ class LocationsFrame(ttkb.Frame):
 
         toolbar = ttkb.Frame(self)
         toolbar.pack(fill=tk.X, padx=10, pady=10)
-        ttkb.Button(toolbar, text="Neuer Standort", command=self.add_location, bootstyle="success").pack(side=LEFT)
+        ttkb.Button(toolbar, text="Neuer Standort", command=self.add_location, bootstyle="success").pack(
+            side=LEFT
+        )
+        ttkb.Button(toolbar, text="Bearbeiten", command=self.edit_location, bootstyle="secondary").pack(
+            side=LEFT, padx=5
+        )
+        ttkb.Button(toolbar, text="Löschen", command=self.delete_location, bootstyle="danger").pack(side=LEFT)
 
         columns = [
             {"text": "ID"},
@@ -785,6 +818,66 @@ class LocationsFrame(ttkb.Frame):
             land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung = dialog.result
             self.db.add_location(land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung)
             self.refresh()
+
+    def edit_location(self) -> None:
+        location_id = self._selected_location_id()
+        if not location_id:
+            return
+        row = self.db.get_location(location_id)
+        if not row:
+            Messagebox.show_error("Standort nicht gefunden", "Fehler")
+            return
+        fields = ["Land", "Bereich", "Bezirk", "Bezirksstelle", "Ortsstelle", "Beschreibung"]
+        initial = [
+            row["land"] or "",
+            row["bereich"] or "",
+            row["bezirk"] or "",
+            row["bezirksstelle"] or "",
+            row["ortsstelle"] or "",
+            row["beschreibung"] or "",
+        ]
+        dialog = SimpleEntryDialog(self, "Standort bearbeiten", fields, initial)
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung = dialog.result
+        self.db.update_location(
+            location_id,
+            land,
+            bereich,
+            bezirk,
+            bezirksstelle,
+            ortsstelle,
+            beschreibung,
+        )
+        self.refresh()
+
+    def delete_location(self) -> None:
+        location_id = self._selected_location_id()
+        if not location_id:
+            return
+        confirm = Messagebox.okcancel("Standort wirklich löschen?", "Bestätigung", alert=True)
+        if confirm != "OK":
+            return
+        try:
+            self.db.delete_location(location_id)
+        except sqlite3.IntegrityError:
+            Messagebox.show_error(
+                "Standort wird noch verwendet und kann nicht gelöscht werden.",
+                "Fehler",
+            )
+            return
+        self.refresh()
+
+    def _selected_location_id(self) -> Optional[int]:
+        if not self.table.view.focus():
+            Messagebox.show_info("Bitte Standort auswählen", "Hinweis")
+            return None
+        rows = self.table.get_rows("selected")
+        if not rows:
+            Messagebox.show_info("Bitte Standort auswählen", "Hinweis")
+            return None
+        return int(rows[0].values[0])
 
 
 class ContactsFrame(ttkb.Frame):
@@ -1231,7 +1324,13 @@ class UsersFrame(ttkb.Frame):
 
 
 class SimpleEntryDialog(ttkb.Toplevel):
-    def __init__(self, master: tk.Misc, title: str, fields: List[str]) -> None:
+    def __init__(
+        self,
+        master: tk.Misc,
+        title: str,
+        fields: List[str],
+        initial: Optional[List[str]] = None,
+    ) -> None:
         super().__init__(master)
         self.title(title)
         self.resizable(False, False)
@@ -1243,7 +1342,10 @@ class SimpleEntryDialog(ttkb.Toplevel):
         self.variables: List[ttkb.StringVar] = []
         for index, label in enumerate(fields):
             ttkb.Label(container, text=label).grid(row=index, column=0, sticky=W, pady=5)
-            var = ttkb.StringVar()
+            initial_value = ""
+            if initial and index < len(initial):
+                initial_value = initial[index]
+            var = ttkb.StringVar(value=initial_value)
             ttkb.Entry(container, textvariable=var, width=40).grid(row=index, column=1, sticky=W)
             self.variables.append(var)
 
@@ -1494,11 +1596,16 @@ class PersonalizationDialog(ttkb.Toplevel):
         ttkb.Spinbox(
             container,
             textvariable=self.scale_var,
-            from_=0.8,
-            to=1.6,
+            from_=1.0,
+            to=3.0,
             increment=0.1,
             width=10,
         ).grid(row=1, column=1, sticky=W)
+        ttkb.Label(
+            container,
+            text="(1.0 = Standardgröße, 2.0 = extra groß)",
+            bootstyle="secondary",
+        ).grid(row=2, column=0, columnspan=2, sticky=W)
 
         self.info_var = ttkb.BooleanVar(value=show_welcome)
         ttkb.Checkbutton(
@@ -1506,10 +1613,10 @@ class PersonalizationDialog(ttkb.Toplevel):
             text="Willkommensnachricht anzeigen",
             variable=self.info_var,
             bootstyle="round-toggle",
-        ).grid(row=2, column=0, columnspan=2, sticky=W, pady=(10, 0))
+        ).grid(row=3, column=0, columnspan=2, sticky=W, pady=(10, 0))
 
         button_frame = ttkb.Frame(container)
-        button_frame.grid(row=3, column=0, columnspan=2, pady=(20, 0))
+        button_frame.grid(row=4, column=0, columnspan=2, pady=(20, 0))
         ttkb.Button(button_frame, text="Speichern", command=self.on_save, bootstyle="success").pack(side=LEFT, padx=5)
         ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(side=LEFT, padx=5)
 
@@ -1527,11 +1634,19 @@ class PersonalizationDialog(ttkb.Toplevel):
 
 
 class ProductEditor(ttkb.Toplevel):
-    def __init__(self, master: tk.Misc, db: DatabaseManager, produkt_id: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        master: tk.Misc,
+        db: DatabaseManager,
+        produkt_id: Optional[int] = None,
+        *,
+        initial_tab: str = "details",
+    ) -> None:
         super().__init__(master)
         self.db = db
         self.produkt_id = produkt_id
         self.saved = False
+        self.initial_tab = initial_tab
         self.title("Produkt bearbeiten" if produkt_id else "Neues Produkt")
         self.geometry("720x650")
 
@@ -1576,6 +1691,14 @@ class ProductEditor(ttkb.Toplevel):
         )
         self.notebook.add(self.repairs_tab, text="Reparaturen")
 
+        self._tabs = {
+            "details": self.details_frame,
+            "components": self.components_tab,
+            "maintenance": self.maintenance_tab,
+            "repairs": self.repairs_tab,
+        }
+        self._select_initial_tab()
+
         button_frame = ttkb.Frame(container)
         button_frame.pack(fill=tk.X, pady=(12, 0))
         ttkb.Button(button_frame, text="Speichern", command=self.save, bootstyle="success").pack(
@@ -1589,6 +1712,10 @@ class ProductEditor(ttkb.Toplevel):
             self.load_data()
 
         self.grab_set()
+
+    def _select_initial_tab(self) -> None:
+        target = self._tabs.get(self.initial_tab, self.details_frame)
+        self.notebook.select(target)
 
     def _build_details(self, parent: ttkb.Frame) -> None:
         self.name_var = ttkb.StringVar()
@@ -3254,7 +3381,10 @@ class MedizinprodukteApp(ttkb.Window):
             self.font_scale = float(self.preferences.get("font_scale", "1.0"))
         except ValueError:
             self.font_scale = 1.0
+        if self.font_scale < 1.0:
+            self.font_scale = 1.0
         self.show_welcome_info = self.preferences.get("show_welcome", "1") != "0"
+        self._configure_base_fonts()
         self._apply_theme(self.current_theme, persist=False)
         self._apply_font_scale(self.font_scale, persist=False)
 
@@ -3351,8 +3481,23 @@ class MedizinprodukteApp(ttkb.Window):
         self.style.configure("KpiTitle.TLabel", foreground=accent, font=("Inter", 11, "bold"))
         self.style.configure("KpiValue.TLabel", foreground=card_fg, font=("Inter", 26, "bold"))
 
+    def _configure_base_fonts(self) -> None:
+        base_size = 16
+        for font_name in [
+            "TkDefaultFont",
+            "TkTextFont",
+            "TkHeadingFont",
+            "TkMenuFont",
+            "TkTooltipFont",
+            "TkFixedFont",
+        ]:
+            try:
+                tkfont.nametofont(font_name).configure(size=base_size)
+            except tk.TclError:
+                continue
+
     def _apply_font_scale(self, scale: float, persist: bool = True) -> None:
-        if scale <= 0:
+        if scale < 1.0:
             scale = 1.0
         self.tk.call("tk", "scaling", scale)
         self.font_scale = scale
