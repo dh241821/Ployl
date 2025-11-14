@@ -51,8 +51,15 @@ class LoginDialog(ttkb.Toplevel):
         self.resizable(False, False)
         self.db = db
         self.user: Optional[User] = None
+        self.transient(master)
         self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self.on_cancel)
+
+        self.update_idletasks()
+        self.lift()
+        self.attributes("-topmost", True)
+        self.after(150, lambda: self.attributes("-topmost", False))
+        self.focus_force()
 
         container = ttkb.Frame(self, padding=20)
         container.pack(fill=BOTH, expand=True)
@@ -1699,13 +1706,13 @@ class ProductEditor(ttkb.Toplevel):
         }
         self._select_initial_tab()
 
-        button_frame = ttkb.Frame(container)
-        button_frame.pack(fill=tk.X, pady=(12, 0))
-        ttkb.Button(button_frame, text="Speichern", command=self.save, bootstyle="success").pack(
-            side=LEFT, padx=5
-        )
+        button_frame = ttkb.Frame(self, padding=(15, 12))
+        button_frame.pack(fill=tk.X)
         ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(
-            side=LEFT, padx=5
+            side=RIGHT, padx=5
+        )
+        ttkb.Button(button_frame, text="Speichern", command=self.save, bootstyle="success").pack(
+            side=RIGHT, padx=5
         )
 
         if produkt_id:
