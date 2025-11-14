@@ -10,17 +10,22 @@ from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .database import Base, _engine, session_scope
 from .auth import hash_password
+from .models import Benutzer, Dokument, Fahrzeug, FahrzeugPosition, Kostenbuchung, Material, Produkt, Reparatur, Wartung, WartungsInsight
 from .routers import auth as auth_router
 from .routers import dashboard as dashboard_router
 from .routers import notifications as notifications_router
 from .routers import scanner as scanner_router
+from .routers import maintenance as maintenance_router
+from .routers import costs as costs_router
+from .routers import documents as documents_router
+from .routers import geotracking as geotracking_router
+from .routers import audit as audit_router
+from .services.audit import configure_audit_events
 from .services.scheduler import register_scheduler
 
 Base.metadata.create_all(bind=_engine)
 
 with session_scope() as session:
-    from .models import Benutzer
-
     if not session.query(Benutzer).filter(Benutzer.username == "admin").first():
         session.add(
             Benutzer(
@@ -37,10 +42,30 @@ app = FastAPI(title=settings.app_name)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+configure_audit_events(
+    (
+        Benutzer,
+        Produkt,
+        Fahrzeug,
+        Material,
+        Reparatur,
+        Wartung,
+        Dokument,
+        Kostenbuchung,
+        WartungsInsight,
+        FahrzeugPosition,
+    )
+)
+
 app.include_router(auth_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(scanner_router.router)
 app.include_router(notifications_router.router)
+app.include_router(maintenance_router.router)
+app.include_router(costs_router.router)
+app.include_router(documents_router.router)
+app.include_router(geotracking_router.router)
+app.include_router(audit_router.router)
 
 register_scheduler(app)
 

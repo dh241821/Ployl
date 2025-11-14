@@ -73,6 +73,9 @@ class Fahrzeug(TimestampMixin, Base):
 
     standort = relationship("Standort")
     produkte = relationship("Produkt", back_populates="fahrzeug")
+    dokumente = relationship("Dokument", back_populates="fahrzeug", cascade="all,delete-orphan")
+    kostenbuchungen = relationship("Kostenbuchung", back_populates="fahrzeug", cascade="all,delete-orphan")
+    positionen = relationship("FahrzeugPosition", back_populates="fahrzeug", cascade="all,delete-orphan")
 
 
 class FahrzeugLog(Base):
@@ -101,6 +104,9 @@ class Produkt(TimestampMixin, Base):
     fahrzeug_id = Column(Integer, ForeignKey("fahrzeuge.id"))
     status = Column(String(32), nullable=False, default="im_dienst")
     interne_kennung = Column(String(120))
+    anschaffungskosten = Column(Float, default=0.0)
+    restwert = Column(Float, default=0.0)
+    nutzungsdauer_monate = Column(Integer, default=60)
     stk_intervall = Column(Integer, default=12)
     mtk_intervall = Column(Integer, default=24)
     letzte_stk = Column(Date)
@@ -113,6 +119,9 @@ class Produkt(TimestampMixin, Base):
     komponenten = relationship("ProduktKomponente", back_populates="produkt", cascade="all,delete")
     reparaturen = relationship("Reparatur", back_populates="produkt", cascade="all,delete")
     wartungen = relationship("Wartung", back_populates="produkt", cascade="all,delete")
+    dokumente = relationship("Dokument", back_populates="produkt", cascade="all,delete-orphan")
+    kostenbuchungen = relationship("Kostenbuchung", back_populates="produkt", cascade="all,delete-orphan")
+    planungs_insights = relationship("WartungsInsight", back_populates="produkt", cascade="all,delete-orphan")
 
 
 class ProduktLog(Base):
@@ -194,3 +203,81 @@ class Ausscheidung(Base):
     datum = Column(Date, nullable=False)
 
     produkt = relationship("Produkt")
+
+
+class Dokument(TimestampMixin, Base):
+    __tablename__ = "dokumente"
+
+    id = Column(Integer, primary_key=True)
+    produkt_id = Column(Integer, ForeignKey("produkte.id"))
+    fahrzeug_id = Column(Integer, ForeignKey("fahrzeuge.id"))
+    titel = Column(String(200), nullable=False)
+    original_name = Column(String(255))
+    content_type = Column(String(80))
+    dateipfad = Column(String(255), nullable=False)
+    cloud_url = Column(String(255))
+    tags = Column(Text)
+    ocr_text = Column(Text)
+    checksum = Column(String(64))
+
+    produkt = relationship("Produkt", back_populates="dokumente")
+    fahrzeug = relationship("Fahrzeug", back_populates="dokumente")
+
+
+class Kostenbuchung(TimestampMixin, Base):
+    __tablename__ = "kostenbuchungen"
+
+    id = Column(Integer, primary_key=True)
+    produkt_id = Column(Integer, ForeignKey("produkte.id"))
+    fahrzeug_id = Column(Integer, ForeignKey("fahrzeuge.id"))
+    datum = Column(Date, nullable=False)
+    betrag = Column(Float, nullable=False)
+    typ = Column(String(50), nullable=False)
+    beschreibung = Column(Text)
+    quelle = Column(String(120))
+
+    produkt = relationship("Produkt", back_populates="kostenbuchungen")
+    fahrzeug = relationship("Fahrzeug", back_populates="kostenbuchungen")
+
+
+class WartungsInsight(TimestampMixin, Base):
+    __tablename__ = "wartungs_insights"
+
+    id = Column(Integer, primary_key=True)
+    produkt_id = Column(Integer, ForeignKey("produkte.id"), nullable=False)
+    modell_version = Column(String(40), nullable=False)
+    prognose_datum = Column(Date, nullable=False)
+    fenster_start = Column(Date, nullable=False)
+    fenster_ende = Column(Date, nullable=False)
+    konfidens = Column(Float, nullable=False)
+    datenpunkte = Column(Integer, default=0)
+    methode = Column(String(120))
+    metadaten = Column(Text)
+
+    produkt = relationship("Produkt", back_populates="planungs_insights")
+
+
+class FahrzeugPosition(Base):
+    __tablename__ = "fahrzeug_positionen"
+
+    id = Column(Integer, primary_key=True)
+    fahrzeug_id = Column(Integer, ForeignKey("fahrzeuge.id"), nullable=False)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    accuracy = Column(Float)
+    zeitstempel = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    fahrzeug = relationship("Fahrzeug", back_populates="positionen")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True)
+    entity_type = Column(String(80), nullable=False)
+    entity_id = Column(Integer)
+    action = Column(String(40), nullable=False)
+    payload = Column(Text, nullable=False)
+    benutzername = Column(String(120))
+    signature = Column(String(128), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 
 class Token(BaseModel):
@@ -130,3 +130,110 @@ class ScanResult(BaseModel):
 class RepairCostTrend(BaseModel):
     month: str
     total_cost: float
+
+
+class MaintenanceRecommendation(BaseModel):
+    produkt_id: int
+    produkt_name: str
+    predicted_date: date
+    window_start: date
+    window_end: date
+    confidence: float
+    model_version: str
+    data_points: int
+    method: str
+
+
+class CostEntryBase(BaseModel):
+    produkt_id: Optional[int]
+    fahrzeug_id: Optional[int]
+    datum: date
+    betrag: float
+    typ: str
+    beschreibung: Optional[str]
+    quelle: Optional[str]
+
+
+class CostEntryCreate(CostEntryBase):
+    pass
+
+
+class CostEntryRead(CostEntryBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+
+class LifecycleCostSummary(BaseModel):
+    produkt_id: int
+    produkt_name: str
+    anschaffungskosten: float
+    reparaturkosten: float
+    laufende_kosten: float
+    gesamtkosten: float
+    roi: float
+    kosten_pro_monat: float
+    datenpunkte: int
+
+
+class DocumentRead(BaseModel):
+    id: int
+    titel: str
+    original_name: Optional[str]
+    content_type: Optional[str]
+    cloud_url: Optional[str]
+    tags: List[str] = []
+    produkt_id: Optional[int]
+    fahrzeug_id: Optional[int]
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+    @validator("tags", pre=True)
+    def split_tags(cls, value: Optional[str]) -> List[str]:  # noqa: D401
+        """Split comma separated tag strings into a list."""
+
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        return [tag.strip() for tag in value.split(",") if tag.strip()]
+
+
+class GeoPositionCreate(BaseModel):
+    fahrzeug_id: int
+    latitude: float
+    longitude: float
+    accuracy: Optional[float]
+    zeitstempel: Optional[datetime]
+
+
+class GeoPositionRead(BaseModel):
+    id: int
+    fahrzeug_id: int
+    latitude: float
+    longitude: float
+    accuracy: Optional[float]
+    zeitstempel: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class GeoRouteRead(BaseModel):
+    fahrzeug_id: int
+    total_distance_km: float
+    positions: List[GeoPositionRead]
+
+
+class AuditLogRead(BaseModel):
+    id: int
+    entity_type: str
+    entity_id: Optional[int]
+    action: str
+    payload: str
+    benutzername: Optional[str]
+    created_at: datetime
+    signature_valid: bool

@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     smtp_password: Optional[str] = Field(default=None, env="SMTP_PASSWORD")
     smtp_sender: Optional[EmailStr] = Field(default=None, env="SMTP_SENDER")
     dashboard_cache_seconds: int = 60
+    audit_secret: str = Field(default="audit-secret-key", env="AUDIT_SECRET")
+    cloud_storage_base_url: Optional[str] = Field(default=None, env="CLOUD_STORAGE_BASE_URL")
+    ocr_languages: str = Field(default="deu+eng", env="OCR_LANGUAGES")
+    geo_route_profile: str = Field(default="driving", env="GEO_ROUTE_PROFILE")
+    maintenance_model_version: str = Field(default="1.0.0", env="MAINTENANCE_MODEL_VERSION")
 
     class Config:
         env_file = ".env"

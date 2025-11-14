@@ -12,3 +12,10 @@ pydantic
 apscheduler
 ics
 aiosmtplib
+numpy
+scikit-learn
+scipy
+Pillow
+pytesseract
+python-multipart
+geopy

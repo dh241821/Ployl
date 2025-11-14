@@ -342,6 +342,56 @@ Das Dashboard ist die Startseite nach dem Login. Es zeigt:
 
 ---
 
+### 1.13 Automatisierte Wartungsplanung (ML)
+
+- **Endpunkte:** `/api/maintenance` liefert Prognosen, `/api/maintenance/refresh` trainiert das Modell neu.
+- **ML-Modell:** Linear Regression über historische Wartungsintervalle, Mindestbasis sind STK/MTK-Intervalle.
+- **Konfidenzwerte:** Anzeige im Dashboard (PWA) für Priorisierung; Fenster ±7 Tage um prognostizierten Termin.
+- **Workflow:** 1. Wartungsabschlüsse pflegen → 2. Refresh auslösen (cron oder manuell) → 3. Empfehlungen übernehmen.
+- **Persistenz:** Ergebnisse werden als `wartungs_insights` gespeichert und bei jeder Berechnung überschrieben.
+
+---
+
+### 1.14 Kostenmanagement & ROI
+
+- **Kostenbuchungen:** POST `/api/costs/entries` (Typen: `anschaffung`, `wartung`, `betrieb`, `sonstiges`).
+- **Lifecycle-Analyse:** GET `/api/costs/lifecycle` liefert Gesamt-, Monats- und ROI-Werte je Produkt.
+- **Produktfelder:** `Anschaffungskosten`, `Restwert`, `Nutzungsdauer` ergänzen bestehende Produktstammdaten.
+- **Dashboard-Integration:** ROI-Ampel und TCO-Tabelle in der PWA für Budget-Entscheidungen.
+- **Export:** Ergebnisse können als CSV aus dem PWA-Dashboard exportiert werden.
+
+---
+
+### 1.15 Dokumentenverwaltung & OCR
+
+- **Upload:** `/api/documents/upload` akzeptiert Mehrteil-Formdaten (Titel, Produkt/Fahrzeug, Tags, Datei).
+- **Speicherung:** Dateien landen im Verzeichnis `storage/documents/`, SHA-Checksumme sichert Integrität.
+- **OCR:** Optional via Tesseract (`pytesseract`), Sprache konfigurierbar über `OCR_LANGUAGES`.
+- **Tagging & Suche:** Volltextsuche über OCR-Inhalte, Tag-Filter als Komma-Liste.
+- **Cloud-Link:** Automatisch generierter Link (`CLOUD_STORAGE_BASE_URL`) für externe Archivierung.
+
+---
+
+### 1.16 Geo-Tracking & Routenanalyse
+
+- **Positions-API:** POST `/api/geo/positions` protokolliert GPS-Daten mit Genauigkeit & Zeitstempel.
+- **Routenabruf:** GET `/api/geo/vehicles/{id}/route` liefert chronologische Trackpunkte & Gesamtstrecke.
+- **Distanzberechnung:** Geodesic (geopy) berechnet Kilometer, Limit der Punkte per Parameter (`limit`).
+- **Integrationen:** PWA-Karte zeigt letzte Route, CSV-Export für Einsatzprotokolle möglich.
+- **Validierung:** API überprüft Fahrzeug-ID und gibt 404 bei unbekannten Fahrzeugen.
+
+---
+
+### 1.17 Audit-Trail & Compliance
+
+- **Automatisches Logging:** Insert/Update/Delete auf Kernobjekten erzeugen signierte Einträge (`audit_log`).
+- **Digitale Signatur:** HMAC-SHA256 über Payload (`AUDIT_SECRET`) → Manipulationsschutz.
+- **Abruf:** GET `/api/audit` (Admin) liefert letzte 500 Einträge inkl. Signaturprüfung.
+- **Benutzerkontext:** `audit_context`-Wrapper setzt ausführenden Benutzer, Scheduler läuft als `system`.
+- **Compliance:** Exportierbar für MDR/DIN-Audits, Signaturstatus dient als Nachweis der Unverändertheit.
+
+---
+
 ## 2. Mögliche Erweiterungen
 
 ### Priorität 1: Hochwertige Verbesserungen (umgesetzt)
@@ -369,40 +419,29 @@ Das Dashboard ist die Startseite nach dem Login. Es zeigt:
 
 ---
 
-### Priorität 2: Mittlere Verbesserungen
+### Priorität 2: Mittlere Verbesserungen (umgesetzt)
 
-6. **Automatisierte Wartungsplanung**
-   - ML-basierte Vorhersage von Ausfallzeiten
-   - Automatische Wartungsplanung nach Nutzungsdaten
-   - Optimale Servicefenster-Vorschläge
-   - **Vorteil:** Weniger ungeplante Ausfallzeiten
+6. **Automatisierte Wartungsplanung** ✅
+   - ML-gestützte Prognosen mit linearer Regression auf Wartungshistorie.
+   - Empfehlungen inklusive Zeitfenster & Konfidenz; speicherbar und exportierbar.
+   - REST-API & Scheduler-Integration ermöglichen nächtliche Aktualisierung.
 
-7. **Kostenmanagement**
-   - Detaillierte Reparaturen-Kostenerfassung
-   - Lebenszyklus-Kostenanalyse (TCO)
-   - ROI-Berechnung für Produkte
-   - Vergleich: Reparatur vs. Neukauf
-   - **Vorteil:** Bessere Budget-Planung
+7. **Kostenmanagement** ✅
+   - Lebenszyklus-Kostenrechnung (TCO) inkl. ROI & Kosten/Monat je Produkt.
+   - Zusätzliche Kostenbuchungen (Wartung, Betrieb) und Reparaturkostenaggregation.
+   - Visualisierung in der PWA und CSV-Exports für Controlling.
 
-8. **Dokumentenverwaltung**
-   - OCR für gescannte Rechnungen/Handbücher
-   - Automatische Katalog-Verschlagwortung
-   - Volltextsuche in Dokumenten
-   - Cloud-Integration (OneDrive/Google Drive)
-   - **Vorteil:** Alle Dokumente zentral abrufbar
+8. **Dokumentenverwaltung** ✅
+   - OCR-gestützte Volltextsuche, Tagging und Cloud-Verlinkung.
+   - Sichere Ablage mit Prüfsumme & API-Upload.
 
-9. **Geo-Location & Asset-Tracking**
-   - GPS-Tracking für Fahrzeuge (Live-Map)
-   - Automatische Standort-Bestimmung
-   - Routenoptimierung für Wartungen
-   - **Vorteil:** Know wo deine Fahrzeuge sind
+9. **Geo-Location & Asset-Tracking** ✅
+   - GPS-Positions-Logging, Distanzberechnung und Routendarstellung.
+   - API-gestützter Export für Einsatz- und Wartungsplanung.
 
-10. **Audit-Trail & Compliance**
-    - Detailliertes Änderungsprotokoll (wer, wann, was)
-    - Digitale Signaturen für Wartungen
-    - Compliance-Berichte (DIN, MDR etc.)
-    - Datenexporte für Behörden
-    - **Vorteil:** Regulatorische Anforderungen erfüllt
+10. **Audit-Trail & Compliance** ✅
+    - Lückenlose Änderungsnachverfolgung mit HMAC-Signatur.
+    - Admin-API zur Überprüfung inkl. Signaturvalidierung.
 
 ---
 
