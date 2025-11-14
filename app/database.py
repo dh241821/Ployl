@@ -53,13 +53,43 @@ class DatabaseManager:
                     username TEXT UNIQUE NOT NULL,
                     password_hash TEXT NOT NULL,
                     full_name TEXT NOT NULL,
-                    role TEXT NOT NULL CHECK(role IN ('admin', 'benutzer'))
+                    role TEXT NOT NULL CHECK(role IN ('admin', 'benutzer')),
+                    vorname TEXT,
+                    nachname TEXT,
+                    dienstnummer TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS kategorien (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
                     typ TEXT NOT NULL CHECK(typ IN ('produkt', 'material'))
+                );
+
+                CREATE TABLE IF NOT EXISTS produkt_typen (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE
+                );
+
+                CREATE TABLE IF NOT EXISTS produkt_modelle (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    typ_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    FOREIGN KEY(typ_id) REFERENCES produkt_typen(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS komponententypen (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE
+                );
+
+                CREATE TABLE IF NOT EXISTS reparatur_arten (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE
+                );
+
+                CREATE TABLE IF NOT EXISTS upload_kategorien (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE
                 );
 
                 CREATE TABLE IF NOT EXISTS standorte (
@@ -92,7 +122,29 @@ class DatabaseManager:
                     standort_id INTEGER,
                     kilometerstand INTEGER DEFAULT 0,
                     status TEXT NOT NULL DEFAULT 'im_dienst',
+                    ausserbetrieb INTEGER NOT NULL DEFAULT 0,
+                    ausserbetriebnahme_datum TEXT,
+                    marke_id INTEGER,
+                    fahrzeugtyp_id INTEGER,
+                    fahrzeugkategorie_id INTEGER,
                     FOREIGN KEY(standort_id) REFERENCES standorte(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS fahrzeug_marken (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE
+                );
+
+                CREATE TABLE IF NOT EXISTS fahrzeug_modelle (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    marke_id INTEGER,
+                    name TEXT NOT NULL,
+                    FOREIGN KEY(marke_id) REFERENCES fahrzeug_marken(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS fahrzeug_kategorien (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE
                 );
 
                 CREATE TABLE IF NOT EXISTS fahrzeug_log (
@@ -120,9 +172,19 @@ class DatabaseManager:
                     mtk_intervall INTEGER DEFAULT 24,
                     letzte_stk TEXT,
                     letzte_mtk TEXT,
+                    naechste_stk TEXT,
+                    naechste_mtk TEXT,
+                    stk_aktiv INTEGER NOT NULL DEFAULT 1,
+                    mtk_aktiv INTEGER NOT NULL DEFAULT 1,
+                    lagerort TEXT,
+                    produkt_typ_id INTEGER,
+                    produkt_modell_id INTEGER,
+                    informationstext TEXT,
                     FOREIGN KEY(kategorie_id) REFERENCES kategorien(id),
                     FOREIGN KEY(standort_id) REFERENCES standorte(id),
-                    FOREIGN KEY(fahrzeug_id) REFERENCES fahrzeuge(id)
+                    FOREIGN KEY(fahrzeug_id) REFERENCES fahrzeuge(id),
+                    FOREIGN KEY(produkt_typ_id) REFERENCES produkt_typen(id) ON DELETE SET NULL,
+                    FOREIGN KEY(produkt_modell_id) REFERENCES produkt_modelle(id) ON DELETE SET NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS produkt_log (
@@ -142,6 +204,7 @@ class DatabaseManager:
                     seriennummer TEXT,
                     anschaffungsdatum TEXT,
                     bemerkung TEXT,
+                     komponententyp_id INTEGER,
                     FOREIGN KEY(produkt_id) REFERENCES produkte(id) ON DELETE CASCADE
                 );
 
@@ -152,8 +215,20 @@ class DatabaseManager:
                     kosten REAL,
                     kontakt_id INTEGER,
                     beschreibung TEXT,
+                    reparatur_art_id INTEGER,
                     FOREIGN KEY(produkt_id) REFERENCES produkte(id) ON DELETE CASCADE,
-                    FOREIGN KEY(kontakt_id) REFERENCES kontakte(id)
+                    FOREIGN KEY(kontakt_id) REFERENCES kontakte(id),
+                    FOREIGN KEY(reparatur_art_id) REFERENCES reparatur_arten(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS reparatur_dateien (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    reparatur_id INTEGER NOT NULL,
+                    dateiname TEXT NOT NULL,
+                    speicherpfad TEXT NOT NULL,
+                    upload_kategorie_id INTEGER,
+                    FOREIGN KEY(reparatur_id) REFERENCES reparaturen(id) ON DELETE CASCADE,
+                    FOREIGN KEY(upload_kategorie_id) REFERENCES upload_kategorien(id) ON DELETE SET NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS ausscheidungen (
@@ -186,8 +261,81 @@ class DatabaseManager:
                     verfallsdatum TEXT,
                     FOREIGN KEY(kategorie_id) REFERENCES kategorien(id)
                 );
+
+                CREATE TABLE IF NOT EXISTS material_bezeichnungen (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE
+                );
+
+                CREATE TABLE IF NOT EXISTS benutzer_einstellungen (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    benutzer_id INTEGER NOT NULL,
+                    schluessel TEXT NOT NULL,
+                    wert TEXT NOT NULL,
+                    UNIQUE(benutzer_id, schluessel),
+                    FOREIGN KEY(benutzer_id) REFERENCES benutzer(id) ON DELETE CASCADE
+                );
                 """
             )
+
+        self._seed_defaults()
+        self._ensure_columns()
+
+    def _ensure_columns(self) -> None:
+        self._ensure_column("produkte", "naechste_stk", "TEXT")
+        self._ensure_column("produkte", "naechste_mtk", "TEXT")
+        self._ensure_column("produkte", "stk_aktiv", "INTEGER NOT NULL DEFAULT 1")
+        self._ensure_column("produkte", "mtk_aktiv", "INTEGER NOT NULL DEFAULT 1")
+        self._ensure_column("produkte", "lagerort", "TEXT")
+        self._ensure_column("produkte", "produkt_typ_id", "INTEGER REFERENCES produkt_typen(id)")
+        self._ensure_column("produkte", "produkt_modell_id", "INTEGER REFERENCES produkt_modelle(id)")
+        self._ensure_column("produkte", "informationstext", "TEXT")
+
+        self._ensure_column("fahrzeuge", "ausserbetrieb", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("fahrzeuge", "ausserbetriebnahme_datum", "TEXT")
+        self._ensure_column("fahrzeuge", "marke_id", "INTEGER REFERENCES fahrzeug_marken(id)")
+        self._ensure_column("fahrzeuge", "fahrzeugtyp_id", "INTEGER REFERENCES fahrzeug_modelle(id)")
+        self._ensure_column("fahrzeuge", "fahrzeugkategorie_id", "INTEGER REFERENCES fahrzeug_kategorien(id)")
+
+        self._ensure_column("produkt_komponenten", "komponententyp_id", "INTEGER REFERENCES komponententypen(id)")
+        self._ensure_column("reparaturen", "reparatur_art_id", "INTEGER REFERENCES reparatur_arten(id)")
+
+        self._ensure_column("benutzer", "vorname", "TEXT")
+        self._ensure_column("benutzer", "nachname", "TEXT")
+        self._ensure_column("benutzer", "dienstnummer", "TEXT")
+
+    def _seed_defaults(self) -> None:
+        with self.connection:
+            existing = {
+                row[0]
+                for row in self.connection.execute("SELECT name FROM fahrzeug_kategorien")
+            }
+            for eintrag in ["RTW-C", "RTW", "KTW", "BKTW", "NEF", "BEL", "MTF", "Sonstiges"]:
+                if eintrag not in existing:
+                    self.connection.execute(
+                        "INSERT INTO fahrzeug_kategorien (name) VALUES (?)",
+                        (eintrag,),
+                    )
+
+            if not list(self.connection.execute("SELECT id FROM upload_kategorien")):
+                for name in ["Rechnung", "Bild", "Protokoll", "Sonstiges"]:
+                    self.connection.execute(
+                        "INSERT INTO upload_kategorien (name) VALUES (?)",
+                        (name,),
+                    )
+
+            if not list(self.connection.execute("SELECT id FROM reparatur_arten")):
+                for name in ["Elektronik", "Mechanik", "Software", "Kalibrierung"]:
+                    self.connection.execute(
+                        "INSERT INTO reparatur_arten (name) VALUES (?)",
+                        (name,),
+                    )
+
+    def _ensure_column(self, table: str, column: str, definition: str) -> None:
+        cur = self.connection.execute(f"PRAGMA table_info({table})")
+        if column in {row[1] for row in cur.fetchall()}:
+            return
+        self.connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def ensure_default_admin(self) -> None:
         """Create the default admin user if no users exist."""
@@ -198,8 +346,11 @@ class DatabaseManager:
                 return
             password_hash = self.hash_password("admin")
             self.connection.execute(
-                "INSERT INTO benutzer (username, password_hash, full_name, role) VALUES (?, ?, ?, ?)",
-                ("admin", password_hash, "Administrator", "admin"),
+                """
+                INSERT INTO benutzer (username, password_hash, full_name, role, vorname, nachname, dienstnummer)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("admin", password_hash, "Administrator", "admin", "Admin", "Account", "0000"),
             )
 
     # ------------------------------------------------------------------
@@ -250,6 +401,227 @@ class DatabaseManager:
                 (name, typ),
             )
             return int(cur.lastrowid)
+
+    def list_product_types(self) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute("SELECT * FROM produkt_typen ORDER BY name")
+        )
+
+    def add_product_type(self, name: str) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                "INSERT INTO produkt_typen (name) VALUES (?)",
+                (name,),
+            )
+            return int(cur.lastrowid)
+
+    def delete_product_type(self, typ_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM produkt_typen WHERE id = ?",
+                (typ_id,),
+            )
+
+    def list_product_models(self, typ_id: Optional[int] = None) -> List[sqlite3.Row]:
+        query = (
+            "SELECT pm.*, pt.name AS typ_name FROM produkt_modelle AS pm "
+            "LEFT JOIN produkt_typen AS pt ON pt.id = pm.typ_id"
+        )
+        params: Tuple[Any, ...] = ()
+        if typ_id:
+            query += " WHERE pm.typ_id = ?"
+            params = (typ_id,)
+        query += " ORDER BY name"
+        return list(self.connection.execute(query, params))
+
+    def add_product_model(self, typ_id: int, name: str) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                "INSERT INTO produkt_modelle (typ_id, name) VALUES (?, ?)",
+                (typ_id, name),
+            )
+            return int(cur.lastrowid)
+
+    def delete_product_model(self, modell_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM produkt_modelle WHERE id = ?",
+                (modell_id,),
+            )
+
+    def list_component_types(self) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute("SELECT * FROM komponententypen ORDER BY name")
+        )
+
+    def add_component_type(self, name: str) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                "INSERT INTO komponententypen (name) VALUES (?)",
+                (name,),
+            )
+            return int(cur.lastrowid)
+
+    def delete_component_type(self, typ_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM komponententypen WHERE id = ?",
+                (typ_id,),
+            )
+
+    def list_repair_types(self) -> List[sqlite3.Row]:
+        return list(self.connection.execute("SELECT * FROM reparatur_arten ORDER BY name"))
+
+    def add_repair_type(self, name: str) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                "INSERT INTO reparatur_arten (name) VALUES (?)",
+                (name,),
+            )
+            return int(cur.lastrowid)
+
+    def delete_repair_type(self, typ_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM reparatur_arten WHERE id = ?",
+                (typ_id,),
+            )
+
+    def list_upload_categories(self) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute("SELECT * FROM upload_kategorien ORDER BY name")
+        )
+
+    def add_upload_category(self, name: str) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                "INSERT INTO upload_kategorien (name) VALUES (?)",
+                (name,),
+            )
+            return int(cur.lastrowid)
+
+    def delete_upload_category(self, category_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM upload_kategorien WHERE id = ?",
+                (category_id,),
+            )
+
+    def list_material_names(self) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute("SELECT * FROM material_bezeichnungen ORDER BY name")
+        )
+
+    def add_material_name(self, name: str) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                "INSERT INTO material_bezeichnungen (name) VALUES (?)",
+                (name,),
+            )
+            return int(cur.lastrowid)
+
+    def delete_material_name(self, name_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM material_bezeichnungen WHERE id = ?",
+                (name_id,),
+            )
+
+    def _ensure_material_name_entry(self, name: str) -> None:
+        trimmed = name.strip()
+        if not trimmed:
+            return
+        existing = self.connection.execute(
+            "SELECT id FROM material_bezeichnungen WHERE name = ?",
+            (trimmed,),
+        ).fetchone()
+        if not existing:
+            self.add_material_name(trimmed)
+
+    def list_vehicle_brands(self) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute("SELECT * FROM fahrzeug_marken ORDER BY name")
+        )
+
+    def add_vehicle_brand(self, name: str) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                "INSERT INTO fahrzeug_marken (name) VALUES (?)",
+                (name,),
+            )
+            return int(cur.lastrowid)
+
+    def delete_vehicle_brand(self, brand_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM fahrzeug_marken WHERE id = ?",
+                (brand_id,),
+            )
+
+    def list_vehicle_models(self, marke_id: Optional[int] = None) -> List[sqlite3.Row]:
+        query = (
+            "SELECT fm.*, mb.name AS marke_name FROM fahrzeug_modelle AS fm "
+            "LEFT JOIN fahrzeug_marken AS mb ON mb.id = fm.marke_id"
+        )
+        params: Tuple[Any, ...] = ()
+        if marke_id:
+            query += " WHERE fm.marke_id = ?"
+            params = (marke_id,)
+        query += " ORDER BY name"
+        return list(self.connection.execute(query, params))
+
+    def add_vehicle_model(self, marke_id: Optional[int], name: str) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                "INSERT INTO fahrzeug_modelle (marke_id, name) VALUES (?, ?)",
+                (marke_id, name),
+            )
+            return int(cur.lastrowid)
+
+    def delete_vehicle_model(self, model_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM fahrzeug_modelle WHERE id = ?",
+                (model_id,),
+            )
+
+    def list_vehicle_categories(self) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute("SELECT * FROM fahrzeug_kategorien ORDER BY name")
+        )
+
+    def add_vehicle_category(self, name: str) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                "INSERT INTO fahrzeug_kategorien (name) VALUES (?)",
+                (name,),
+            )
+            return int(cur.lastrowid)
+
+    def delete_vehicle_category(self, category_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM fahrzeug_kategorien WHERE id = ?",
+                (category_id,),
+            )
+
+    def get_user_preferences(self, benutzer_id: int) -> Dict[str, str]:
+        rows = self.connection.execute(
+            "SELECT schluessel, wert FROM benutzer_einstellungen WHERE benutzer_id = ?",
+            (benutzer_id,),
+        ).fetchall()
+        return {row["schluessel"]: row["wert"] for row in rows}
+
+    def set_user_preference(self, benutzer_id: int, schluessel: str, wert: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO benutzer_einstellungen (benutzer_id, schluessel, wert)
+                VALUES (?, ?, ?)
+                ON CONFLICT(benutzer_id, schluessel) DO UPDATE SET wert = excluded.wert
+                """,
+                (benutzer_id, schluessel, wert),
+            )
 
     def list_locations(self) -> List[sqlite3.Row]:
         return list(self.connection.execute("SELECT * FROM standorte ORDER BY land, bereich, bezirk"))
@@ -316,9 +688,13 @@ class DatabaseManager:
         return list(
             self.connection.execute(
                 """
-                SELECT f.*, s.ortsstelle AS standort_name
+                SELECT f.*, s.ortsstelle AS standort_name, fm.name AS marke_name,
+                       fmo.name AS fahrzeug_typ_name, fk.name AS fahrzeug_kategorie_name
                 FROM fahrzeuge AS f
                 LEFT JOIN standorte AS s ON s.id = f.standort_id
+                LEFT JOIN fahrzeug_marken AS fm ON fm.id = f.marke_id
+                LEFT JOIN fahrzeug_modelle AS fmo ON fmo.id = f.fahrzeugtyp_id
+                LEFT JOIN fahrzeug_kategorien AS fk ON fk.id = f.fahrzeugkategorie_id
                 ORDER BY f.name
                 """
             )
@@ -337,15 +713,24 @@ class DatabaseManager:
         standort_id: Optional[int],
         kilometerstand: int,
         status: str,
+        marke_id: Optional[int],
+        fahrzeugtyp_id: Optional[int],
+        fahrzeugkategorie_id: Optional[int],
+        ausserbetrieb: bool,
+        ausserbetriebnahme: Optional[date],
     ) -> int:
         with self.connection:
             inbetriebnahme_str = self._format_date(inbetriebnahme)
+            ausserbetrieb_str = self._format_date(ausserbetriebnahme)
+            ausserbetrieb_flag = 1 if ausserbetrieb else 0
             if fahrzeug_id:
                 self.connection.execute(
                     """
                     UPDATE fahrzeuge
                     SET name = ?, kennzeichen = ?, marke = ?, typ = ?, kategorie = ?,
-                        inbetriebnahme = ?, standort_id = ?, kilometerstand = ?, status = ?
+                        inbetriebnahme = ?, standort_id = ?, kilometerstand = ?, status = ?,
+                        marke_id = ?, fahrzeugtyp_id = ?, fahrzeugkategorie_id = ?,
+                        ausserbetrieb = ?, ausserbetriebnahme_datum = ?
                     WHERE id = ?
                     """,
                     (
@@ -358,6 +743,11 @@ class DatabaseManager:
                         standort_id,
                         kilometerstand,
                         status,
+                        marke_id,
+                        fahrzeugtyp_id,
+                        fahrzeugkategorie_id,
+                        ausserbetrieb_flag,
+                        ausserbetrieb_str,
                         fahrzeug_id,
                     ),
                 )
@@ -365,8 +755,12 @@ class DatabaseManager:
                 return fahrzeug_id
             cur = self.connection.execute(
                 """
-                INSERT INTO fahrzeuge (name, kennzeichen, marke, typ, kategorie, inbetriebnahme, standort_id, kilometerstand, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO fahrzeuge (
+                    name, kennzeichen, marke, typ, kategorie, inbetriebnahme, standort_id,
+                    kilometerstand, status, marke_id, fahrzeugtyp_id, fahrzeugkategorie_id,
+                    ausserbetrieb, ausserbetriebnahme_datum
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -378,6 +772,11 @@ class DatabaseManager:
                     standort_id,
                     kilometerstand,
                     status,
+                    marke_id,
+                    fahrzeugtyp_id,
+                    fahrzeugkategorie_id,
+                    ausserbetrieb_flag,
+                    ausserbetrieb_str,
                 ),
             )
             new_id = int(cur.lastrowid)
@@ -406,11 +805,14 @@ class DatabaseManager:
         return list(
             self.connection.execute(
                 """
-                SELECT p.*, k.name AS kategorie_name, s.ortsstelle AS standort_name, f.name AS fahrzeug_name
+                SELECT p.*, k.name AS kategorie_name, s.ortsstelle AS standort_name, f.name AS fahrzeug_name,
+                       pt.name AS produkt_typ_name, pm.name AS produkt_modell_name
                 FROM produkte AS p
                 LEFT JOIN kategorien AS k ON k.id = p.kategorie_id
                 LEFT JOIN standorte AS s ON s.id = p.standort_id
                 LEFT JOIN fahrzeuge AS f ON f.id = p.fahrzeug_id
+                LEFT JOIN produkt_typen AS pt ON pt.id = p.produkt_typ_id
+                LEFT JOIN produkt_modelle AS pm ON pm.id = p.produkt_modell_id
                 ORDER BY p.name
                 """
             )
@@ -419,11 +821,14 @@ class DatabaseManager:
     def get_product(self, produkt_id: int) -> Optional[sqlite3.Row]:
         return self.connection.execute(
             """
-            SELECT p.*, k.name AS kategorie_name, s.ortsstelle AS standort_name, f.name AS fahrzeug_name
+            SELECT p.*, k.name AS kategorie_name, s.ortsstelle AS standort_name, f.name AS fahrzeug_name,
+                   pt.name AS produkt_typ_name, pm.name AS produkt_modell_name
             FROM produkte AS p
             LEFT JOIN kategorien AS k ON k.id = p.kategorie_id
             LEFT JOIN standorte AS s ON s.id = p.standort_id
             LEFT JOIN fahrzeuge AS f ON f.id = p.fahrzeug_id
+            LEFT JOIN produkt_typen AS pt ON pt.id = p.produkt_typ_id
+            LEFT JOIN produkt_modelle AS pm ON pm.id = p.produkt_modell_id
             WHERE p.id = ?
             """,
             (produkt_id,),
@@ -445,8 +850,24 @@ class DatabaseManager:
         interne_kennung: str,
         stk_intervall: int,
         mtk_intervall: int,
+        stk_aktiv: bool,
+        mtk_aktiv: bool,
+        letzte_stk: Optional[date],
+        letzte_mtk: Optional[date],
+        naechste_stk: Optional[date],
+        naechste_mtk: Optional[date],
+        lagerort: str,
+        produkt_typ_id: Optional[int],
+        produkt_modell_id: Optional[int],
+        informationstext: str,
     ) -> int:
         anschaffungsdatum_str = self._format_date(anschaffungsdatum)
+        letzte_stk_str = self._format_date(letzte_stk)
+        letzte_mtk_str = self._format_date(letzte_mtk)
+        naechste_stk_str = self._format_date(naechste_stk)
+        naechste_mtk_str = self._format_date(naechste_mtk)
+        stk_flag = 1 if stk_aktiv else 0
+        mtk_flag = 1 if mtk_aktiv else 0
         with self.connection:
             if produkt_id:
                 self.connection.execute(
@@ -454,7 +875,9 @@ class DatabaseManager:
                     UPDATE produkte
                     SET name = ?, typ = ?, seriennummer = ?, hersteller = ?, anschaffungsdatum = ?,
                         kategorie_id = ?, standort_id = ?, fahrzeug_id = ?, status = ?, interne_kennung = ?,
-                        stk_intervall = ?, mtk_intervall = ?
+                        stk_intervall = ?, mtk_intervall = ?, letzte_stk = ?, letzte_mtk = ?, naechste_stk = ?,
+                        naechste_mtk = ?, stk_aktiv = ?, mtk_aktiv = ?, lagerort = ?, produkt_typ_id = ?,
+                        produkt_modell_id = ?, informationstext = ?
                     WHERE id = ?
                     """,
                     (
@@ -470,6 +893,16 @@ class DatabaseManager:
                         interne_kennung,
                         stk_intervall,
                         mtk_intervall,
+                        letzte_stk_str,
+                        letzte_mtk_str,
+                        naechste_stk_str,
+                        naechste_mtk_str,
+                        stk_flag,
+                        mtk_flag,
+                        lagerort,
+                        produkt_typ_id,
+                        produkt_modell_id,
+                        informationstext,
                         produkt_id,
                     ),
                 )
@@ -479,9 +912,11 @@ class DatabaseManager:
                 """
                 INSERT INTO produkte (
                     name, typ, seriennummer, hersteller, anschaffungsdatum, kategorie_id, standort_id,
-                    fahrzeug_id, status, interne_kennung, stk_intervall, mtk_intervall
+                    fahrzeug_id, status, interne_kennung, stk_intervall, mtk_intervall, letzte_stk,
+                    letzte_mtk, naechste_stk, naechste_mtk, stk_aktiv, mtk_aktiv, lagerort, produkt_typ_id,
+                    produkt_modell_id, informationstext
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -496,15 +931,33 @@ class DatabaseManager:
                     interne_kennung,
                     stk_intervall,
                     mtk_intervall,
+                    letzte_stk_str,
+                    letzte_mtk_str,
+                    naechste_stk_str,
+                    naechste_mtk_str,
+                    stk_flag,
+                    mtk_flag,
+                    lagerort,
+                    produkt_typ_id,
+                    produkt_modell_id,
+                    informationstext,
                 ),
             )
             new_id = int(cur.lastrowid)
             self.add_product_log(new_id, "angelegt", "Produkt erstellt")
             return new_id
 
-    def delete_product(self, produkt_id: int) -> None:
+    def mark_product_retired(self, produkt_id: int, datum: date, grund: str) -> None:
         with self.connection:
-            self.connection.execute("DELETE FROM produkte WHERE id = ?", (produkt_id,))
+            self.connection.execute(
+                "UPDATE produkte SET status = 'ausgeschieden' WHERE id = ?",
+                (produkt_id,),
+            )
+            self.connection.execute(
+                "INSERT INTO ausscheidungen (produkt_id, datum, grund) VALUES (?, ?, ?)",
+                (produkt_id, datum.isoformat(), grund),
+            )
+            self.add_product_log(produkt_id, "ausgeschieden", grund)
 
     def add_product_log(self, produkt_id: int, eintragstyp: str, beschreibung: str) -> None:
         with self.connection:
@@ -646,7 +1099,13 @@ class DatabaseManager:
     def list_components(self, produkt_id: int) -> List[sqlite3.Row]:
         return list(
             self.connection.execute(
-                "SELECT * FROM produkt_komponenten WHERE produkt_id = ? ORDER BY name",
+                """
+                SELECT pk.*, kt.name AS komponententyp_name
+                FROM produkt_komponenten AS pk
+                LEFT JOIN komponententypen AS kt ON kt.id = pk.komponententyp_id
+                WHERE pk.produkt_id = ?
+                ORDER BY pk.name
+                """,
                 (produkt_id,),
             )
         )
@@ -661,6 +1120,7 @@ class DatabaseManager:
         seriennummer: str,
         anschaffungsdatum: Optional[date],
         bemerkung: str,
+        komponententyp_id: Optional[int],
     ) -> int:
         anschaffungsdatum_str = self._format_date(anschaffungsdatum)
         with self.connection:
@@ -668,18 +1128,37 @@ class DatabaseManager:
                 self.connection.execute(
                     """
                     UPDATE produkt_komponenten
-                    SET name = ?, hersteller = ?, seriennummer = ?, anschaffungsdatum = ?, bemerkung = ?
+                    SET name = ?, hersteller = ?, seriennummer = ?, anschaffungsdatum = ?, bemerkung = ?,
+                        komponententyp_id = ?
                     WHERE id = ?
                     """,
-                    (name, hersteller, seriennummer, anschaffungsdatum_str, bemerkung, komponent_id),
+                    (
+                        name,
+                        hersteller,
+                        seriennummer,
+                        anschaffungsdatum_str,
+                        bemerkung,
+                        komponententyp_id,
+                        komponent_id,
+                    ),
                 )
                 return komponent_id
             cur = self.connection.execute(
                 """
-                INSERT INTO produkt_komponenten (produkt_id, name, hersteller, seriennummer, anschaffungsdatum, bemerkung)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO produkt_komponenten (
+                    produkt_id, name, hersteller, seriennummer, anschaffungsdatum, bemerkung, komponententyp_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (produkt_id, name, hersteller, seriennummer, anschaffungsdatum_str, bemerkung),
+                (
+                    produkt_id,
+                    name,
+                    hersteller,
+                    seriennummer,
+                    anschaffungsdatum_str,
+                    bemerkung,
+                    komponententyp_id,
+                ),
             )
             return int(cur.lastrowid)
 
@@ -687,9 +1166,10 @@ class DatabaseManager:
         return list(
             self.connection.execute(
                 """
-                SELECT r.*, k.name AS kontakt_name
+                SELECT r.*, k.name AS kontakt_name, ra.name AS reparatur_art_name
                 FROM reparaturen AS r
                 LEFT JOIN kontakte AS k ON k.id = r.kontakt_id
+                LEFT JOIN reparatur_arten AS ra ON ra.id = r.reparatur_art_id
                 WHERE r.produkt_id = ?
                 ORDER BY r.datum DESC
                 """,
@@ -705,14 +1185,22 @@ class DatabaseManager:
         kosten: float,
         kontakt_id: Optional[int],
         beschreibung: str,
+        reparatur_art_id: Optional[int],
     ) -> int:
         with self.connection:
             cur = self.connection.execute(
                 """
-                INSERT INTO reparaturen (produkt_id, datum, kosten, kontakt_id, beschreibung)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO reparaturen (produkt_id, datum, kosten, kontakt_id, beschreibung, reparatur_art_id)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (produkt_id, datum.isoformat(), kosten, kontakt_id, beschreibung),
+                (
+                    produkt_id,
+                    datum.isoformat(),
+                    kosten,
+                    kontakt_id,
+                    beschreibung,
+                    reparatur_art_id,
+                ),
             )
             self.connection.execute(
                 "UPDATE produkte SET status = 'in_reparatur' WHERE id = ?",
@@ -720,6 +1208,45 @@ class DatabaseManager:
             )
             self.add_product_log(produkt_id, "reparatur", beschreibung)
             return int(cur.lastrowid)
+
+    def delete_component(self, komponent_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM produkt_komponenten WHERE id = ?",
+                (komponent_id,),
+            )
+
+    def add_repair_attachment(
+        self,
+        *,
+        reparatur_id: int,
+        dateiname: str,
+        speicherpfad: str,
+        upload_kategorie_id: Optional[int],
+    ) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                """
+                INSERT INTO reparatur_dateien (reparatur_id, dateiname, speicherpfad, upload_kategorie_id)
+                VALUES (?, ?, ?, ?)
+                """,
+                (reparatur_id, dateiname, speicherpfad, upload_kategorie_id),
+            )
+            return int(cur.lastrowid)
+
+    def list_repair_attachments(self, reparatur_id: int) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                """
+                SELECT rd.*, uk.name AS upload_kategorie_name
+                FROM reparatur_dateien AS rd
+                LEFT JOIN upload_kategorien AS uk ON uk.id = rd.upload_kategorie_id
+                WHERE rd.reparatur_id = ?
+                ORDER BY rd.id
+                """,
+                (reparatur_id,),
+            )
+        )
 
     # ------------------------------------------------------------------
     # material management
@@ -748,6 +1275,7 @@ class DatabaseManager:
         verfallsdatum: Optional[date],
     ) -> int:
         verfallsdatum_str = self._format_date(verfallsdatum)
+        self._ensure_material_name_entry(name)
         with self.connection:
             if material_id:
                 self.connection.execute(
@@ -767,6 +1295,73 @@ class DatabaseManager:
                 (name, kategorie_id, lagerort, soll_bestand, ist_bestand, verfallsdatum_str),
             )
             return int(cur.lastrowid)
+
+    def list_users(self) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                "SELECT * FROM benutzer ORDER BY nachname, vorname"
+            )
+        )
+
+    def add_or_update_user(
+        self,
+        *,
+        benutzer_id: Optional[int],
+        vorname: str,
+        nachname: str,
+        dienstnummer: str,
+        rolle: str,
+    ) -> int:
+        username = dienstnummer.strip()
+        if not username:
+            raise ValueError("Dienstnummer darf nicht leer sein")
+        full_name = f"{vorname.strip()} {nachname.strip()}".strip()
+        with self.connection:
+            if benutzer_id:
+                self.connection.execute(
+                    """
+                    UPDATE benutzer
+                    SET username = ?, full_name = ?, role = ?, vorname = ?, nachname = ?, dienstnummer = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        username,
+                        full_name or username,
+                        rolle,
+                        vorname,
+                        nachname,
+                        dienstnummer,
+                        benutzer_id,
+                    ),
+                )
+                return benutzer_id
+            cur = self.connection.execute(
+                """
+                INSERT INTO benutzer (username, password_hash, full_name, role, vorname, nachname, dienstnummer)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    username,
+                    self.hash_password(dienstnummer),
+                    full_name or username,
+                    rolle,
+                    vorname,
+                    nachname,
+                    dienstnummer,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def set_user_password(self, benutzer_id: int, password: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE benutzer SET password_hash = ? WHERE id = ?",
+                (self.hash_password(password), benutzer_id),
+            )
+
+    def delete_user(self, benutzer_id: int) -> None:
+        with self.connection:
+            self.connection.execute("DELETE FROM benutzer WHERE id = ?", (benutzer_id,))
 
     # ------------------------------------------------------------------
     # maintenance
@@ -829,6 +1424,13 @@ class DatabaseManager:
                 ),
             )
             return int(cur.lastrowid)
+
+    def delete_maintenance(self, wartung_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM wartungen WHERE id = ?",
+                (wartung_id,),
+            )
 
     # ------------------------------------------------------------------
     # analytics helpers
