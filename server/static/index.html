@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Medizinprodukte Cockpit</title>
+    <link rel="manifest" href="/static/manifest.json" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/modern-css-reset/dist/reset.min.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.10/html5-qrcode.min.js"></script>
+    <script defer src="/static/pwa.js"></script>
+    <style>
+      :root {
+        font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        color-scheme: light dark;
+      }
+
+      body {
+        background: linear-gradient(135deg, #eff6ff 0%, #eef2ff 40%, #f5f3ff 100%);
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        padding: 2.5rem 1rem 3rem;
+        transition: background 0.4s ease;
+      }
+
+      body[data-theme='dark'] {
+        background: radial-gradient(circle at top, #0f172a 0%, #020617 45%, #000 100%);
+        color: #e2e8f0;
+      }
+
+      .app-shell {
+        width: min(1120px, 100%);
+        display: grid;
+        gap: 2.5rem;
+      }
+
+      header {
+        background: rgba(255, 255, 255, 0.85);
+        backdrop-filter: blur(18px);
+        border-radius: 24px;
+        padding: 2.5rem;
+        box-shadow: 0 18px 45px -25px rgba(15, 23, 42, 0.45);
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        transition: background 0.3s ease, border-color 0.3s ease;
+      }
+
+      body[data-theme='dark'] header {
+        background: rgba(15, 23, 42, 0.75);
+        border-color: rgba(51, 65, 85, 0.35);
+      }
+
+      h1 {
+        font-size: clamp(2rem, 2vw + 1.5rem, 3rem);
+        margin-bottom: 0.75rem;
+      }
+
+      header p {
+        font-size: 1.05rem;
+        max-width: 52ch;
+        color: rgba(71, 85, 105, 0.9);
+      }
+
+      body[data-theme='dark'] header p {
+        color: rgba(148, 163, 184, 0.95);
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.75rem;
+        margin-top: 2rem;
+      }
+
+      .toolbar button {
+        border-radius: 999px;
+        padding: 0.6rem 1.1rem;
+        font-weight: 600;
+        border: none;
+        background: linear-gradient(135deg, #1d4ed8, #4338ca);
+        color: #fff;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        box-shadow: 0 10px 20px -12px rgba(37, 99, 235, 0.9);
+      }
+
+      .toolbar button[hidden] {
+        display: none;
+      }
+
+      .toolbar button.secondary {
+        background: transparent;
+        color: inherit;
+        border: 1px solid rgba(100, 116, 139, 0.35);
+        box-shadow: none;
+      }
+
+      .toolbar button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 15px 25px -18px rgba(37, 99, 235, 0.9);
+      }
+
+      #offline-indicator {
+        font-size: 0.95rem;
+        padding: 0.35rem 0.75rem;
+        border-radius: 999px;
+        background: rgba(226, 232, 240, 0.6);
+        color: #0f172a;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+      }
+
+      body[data-theme='dark'] #offline-indicator {
+        background: rgba(30, 41, 59, 0.65);
+        color: #e2e8f0;
+        border-color: rgba(71, 85, 105, 0.6);
+      }
+
+      section {
+        background: rgba(255, 255, 255, 0.9);
+        backdrop-filter: blur(16px);
+        border-radius: 20px;
+        padding: 2rem;
+        box-shadow: 0 18px 45px -30px rgba(15, 23, 42, 0.4);
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        transition: transform 0.2s ease, border-color 0.3s ease, background 0.3s ease;
+      }
+
+      section:hover {
+        transform: translateY(-4px);
+      }
+
+      body[data-theme='dark'] section {
+        background: rgba(15, 23, 42, 0.72);
+        border-color: rgba(71, 85, 105, 0.35);
+      }
+
+      section h2 {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        font-size: 1.4rem;
+        margin-bottom: 1.2rem;
+      }
+
+      .muted {
+        color: rgba(71, 85, 105, 0.75);
+      }
+
+      body[data-theme='dark'] .muted {
+        color: rgba(148, 163, 184, 0.8);
+      }
+
+      form {
+        display: grid;
+        gap: 1rem;
+      }
+
+      label {
+        display: grid;
+        gap: 0.35rem;
+        font-weight: 500;
+      }
+
+      input,
+      textarea {
+        border-radius: 14px;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        padding: 0.8rem 1rem;
+        background: rgba(255, 255, 255, 0.75);
+        transition: border-color 0.3s ease, box-shadow 0.3s ease;
+      }
+
+      body[data-theme='dark'] input,
+      body[data-theme='dark'] textarea {
+        background: rgba(15, 23, 42, 0.65);
+        border-color: rgba(71, 85, 105, 0.5);
+        color: inherit;
+      }
+
+      input:focus,
+      textarea:focus {
+        outline: none;
+        border-color: rgba(59, 130, 246, 0.7);
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+      }
+
+      button[type='submit'],
+      #dispatch-btn {
+        justify-self: start;
+        border-radius: 14px;
+        border: none;
+        padding: 0.75rem 1.3rem;
+        font-weight: 600;
+        color: #fff;
+        background: linear-gradient(135deg, #2563eb, #9333ea);
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        box-shadow: 0 15px 30px -20px rgba(79, 70, 229, 0.8);
+      }
+
+      button[type='submit']:hover,
+      #dispatch-btn:hover {
+        transform: translateY(-2px);
+      }
+
+      .grid {
+        display: grid;
+        gap: 1.5rem;
+      }
+
+      .grid[data-layout='cards'] {
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      }
+
+      .grid[data-layout='split'] {
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      }
+
+      article {
+        background: rgba(15, 23, 42, 0.04);
+        border-radius: 18px;
+        padding: 1.4rem;
+        display: grid;
+        gap: 0.55rem;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        transition: background 0.3s ease, border-color 0.3s ease;
+      }
+
+      article h3 {
+        font-size: 2rem;
+        font-weight: 700;
+      }
+
+      body[data-theme='dark'] article {
+        background: rgba(15, 23, 42, 0.6);
+        border-color: rgba(71, 85, 105, 0.4);
+      }
+
+      canvas {
+        max-width: 100%;
+      }
+
+      #ai-response {
+        min-height: 3rem;
+        padding: 1rem;
+        border-radius: 18px;
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        background: rgba(15, 23, 42, 0.04);
+      }
+
+      body[data-theme='dark'] #ai-response {
+        background: rgba(15, 23, 42, 0.55);
+        border-color: rgba(71, 85, 105, 0.45);
+      }
+
+      #notification-output {
+        margin-top: 1rem;
+        border-radius: 16px;
+        padding: 1rem;
+        background: rgba(15, 23, 42, 0.04);
+      }
+
+      body[data-theme='dark'] #notification-output {
+        background: rgba(15, 23, 42, 0.55);
+      }
+
+      #qr-reader {
+        border-radius: 20px;
+        overflow: hidden;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+      }
+
+      @media (max-width: 720px) {
+        body {
+          padding: 1.5rem 1rem 2rem;
+        }
+
+        header,
+        section {
+          padding: 1.75rem;
+        }
+
+        .toolbar {
+          gap: 0.6rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header>
+        <h1>Medizinprodukte Cockpit</h1>
+        <p class="muted">Browserbasierte Oberfläche mit Echtzeit-Dashboard, Offline-Sync und QR-Workflows.</p>
+        <div class="toolbar">
+          <button id="theme-toggle" type="button" class="secondary" aria-pressed="false">Dark Mode</button>
+          <span id="offline-indicator" role="status" aria-live="polite">Online</span>
+          <button id="install-btn" type="button" hidden>App installieren</button>
+        </div>
+      </header>
+
+      <section id="login-section">
+        <h2>🔐 Anmeldung</h2>
+        <form id="login-form">
+          <label>
+            Benutzername
+            <input type="text" id="username" required />
+          </label>
+          <label>
+            Passwort
+            <input type="password" id="password" required />
+          </label>
+          <button type="submit">Login</button>
+        </form>
+      </section>
+
+      <section id="dashboard" hidden>
+        <h2>📊 Dashboard</h2>
+        <div class="grid" data-layout="cards">
+          <article>
+            <h3 id="kpi-due">0</h3>
+            <p>Fällige Produkte</p>
+          </article>
+          <article>
+            <h3 id="kpi-repair">0</h3>
+            <p>In Reparatur</p>
+          </article>
+          <article>
+            <h3 id="kpi-expired">0</h3>
+            <p>Material abgelaufen</p>
+          </article>
+          <article>
+            <h3 id="kpi-low-stock">0</h3>
+            <p>Material zu niedrig</p>
+          </article>
+          <article>
+            <h3 id="kpi-maintenance">0</h3>
+            <p>Wartung in 30 Tagen</p>
+          </article>
+        </div>
+        <div class="grid" data-layout="split">
+          <article>
+            <canvas id="status-chart"></canvas>
+          </article>
+          <article>
+            <canvas id="repair-chart"></canvas>
+          </article>
+        </div>
+      </section>
+
+      <section id="scanner" hidden>
+        <h2>📷 Scanner</h2>
+        <p>Nutze die Kamera deines Geräts, um QR-/Barcodes einzulesen und Bestände zu aktualisieren.</p>
+        <div id="qr-reader" style="width: 100%; max-width: 420px"></div>
+        <p id="scan-result"></p>
+      </section>
+
+      <section id="notifications" hidden>
+        <h2>📬 Benachrichtigungen</h2>
+        <button id="dispatch-btn">Wartungs-Mails versenden</button>
+        <pre id="notification-output"></pre>
+      </section>
+
+      <section id="ai-assistant" hidden>
+        <h2>🤖 KI-Assistent</h2>
+        <form id="ai-form">
+          <label for="ai-prompt">Frage</label>
+          <textarea id="ai-prompt" rows="3" required aria-describedby="ai-hint"></textarea>
+          <small id="ai-hint">Tippe deine Frage ein. Offline-Anfragen werden automatisch synchronisiert.</small>
+          <button type="submit">Antwort abrufen</button>
+        </form>
+        <article id="ai-response" aria-live="polite"></article>
+      </section>
+
+      <section id="iot-section" hidden>
+        <h2>🌡️ IoT-Sensoren</h2>
+        <p role="status" id="iot-status">Keine Sensoren geladen.</p>
+        <ul id="iot-list"></ul>
+      </section>
+
+      <section id="ar-section" hidden>
+        <h2>🛠️ AR-Wartungsanleitung</h2>
+        <p>Scanne den Geräte-QR-Code um die AR-Anleitung im Einsatz zu öffnen.</p>
+        <ol id="ar-steps"></ol>
+      </section>
+    </main>
+  </body>
+</html>
