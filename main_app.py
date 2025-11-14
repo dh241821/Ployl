@@ -11,7 +11,7 @@ import shutil
 import sqlite3
 
 import ttkbootstrap as ttkb
-from ttkbootstrap.constants import BOTH, LEFT, W
+from ttkbootstrap.constants import BOTH, LEFT, RIGHT, W
 from ttkbootstrap.dialogs import Messagebox
 from ttkbootstrap.tableview import Tableview
 
