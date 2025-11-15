@@ -16,7 +16,13 @@ from ttkbootstrap.dialogs import Messagebox
 from ttkbootstrap.widgets import DateEntry
 from ttkbootstrap.widgets.tableview import Tableview
 
-from app.database import DatabaseManager, User
+from app.database import (
+    DatabaseManager,
+    PERMISSION_COLUMNS,
+    PERMISSION_DEFAULTS,
+    PERMISSION_MODULES,
+    User,
+)
 
 import tkinter as tk
 from tkinter import filedialog, font as tkfont
@@ -317,26 +323,51 @@ class ProductsView(ttkb.Frame):
     def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
         super().__init__(master)
         self.db = db
+        self.write_allowed = True
 
         toolbar = ttkb.Frame(self)
         toolbar.pack(fill=tk.X, padx=10, pady=10)
 
-        ttkb.Button(toolbar, text="Neu", command=self.create_product, bootstyle="success").pack(side=LEFT)
-        ttkb.Button(toolbar, text="Bearbeiten", command=self.edit_product, bootstyle="secondary").pack(side=LEFT, padx=5)
-        ttkb.Button(toolbar, text="Ausscheiden", command=self.retire_product, bootstyle="danger").pack(side=LEFT)
-        ttkb.Button(toolbar, text="Komponenten", command=self.open_components, bootstyle="info").pack(
-            side=LEFT, padx=5
+        self.new_button = ttkb.Button(toolbar, text="Neu", command=self.create_product, bootstyle="success")
+        self.new_button.pack(side=LEFT)
+        self.edit_button = ttkb.Button(toolbar, text="Bearbeiten", command=self.edit_product, bootstyle="secondary")
+        self.edit_button.pack(side=LEFT, padx=5)
+        self.retire_button = ttkb.Button(toolbar, text="Ausscheiden", command=self.retire_product, bootstyle="danger")
+        self.retire_button.pack(side=LEFT)
+        self.components_button = ttkb.Button(
+            toolbar,
+            text="Komponenten",
+            command=self.open_components,
+            bootstyle="info",
         )
-        ttkb.Button(toolbar, text="Wartungen", command=self.open_maintenance, bootstyle="info").pack(
-            side=LEFT
+        self.components_button.pack(side=LEFT, padx=5)
+        self.maintenance_button = ttkb.Button(
+            toolbar,
+            text="Wartungen",
+            command=self.open_maintenance,
+            bootstyle="info",
         )
-        ttkb.Button(toolbar, text="Reparaturen", command=self.open_repairs, bootstyle="info").pack(
-            side=LEFT, padx=5
+        self.maintenance_button.pack(side=LEFT)
+        self.repairs_button = ttkb.Button(
+            toolbar,
+            text="Reparaturen",
+            command=self.open_repairs,
+            bootstyle="info",
         )
+        self.repairs_button.pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="Export CSV", command=self.export_products, bootstyle="info").pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="Lebenslauf", command=self.export_lifecycle, bootstyle="info").pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="Liste HTML", command=self.export_html, bootstyle="primary").pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="ICS Export", command=self.export_ics, bootstyle="secondary").pack(side=LEFT, padx=5)
+
+        self._write_buttons = [
+            self.new_button,
+            self.edit_button,
+            self.retire_button,
+            self.components_button,
+            self.maintenance_button,
+            self.repairs_button,
+        ]
 
         ttkb.Label(toolbar, text="Suche:").pack(side=LEFT, padx=(20, 5))
         self.search_var = ttkb.StringVar()
@@ -382,6 +413,20 @@ class ProductsView(ttkb.Frame):
         self.table = Tableview(self, coldata=columns, rowdata=[], pagesize=15)
         self.table.pack(fill=BOTH, expand=True, padx=10, pady=10)
         self.table.bind("<Double-1>", lambda _event: self.edit_product())
+
+    def set_write_permissions(self, allowed: bool) -> None:
+        """Enable or disable write interactions for the product view."""
+
+        self.write_allowed = allowed
+        state = tk.NORMAL if allowed else tk.DISABLED
+        for widget in self._write_buttons:
+            widget.configure(state=state)
+
+    def _require_write(self) -> bool:
+        if self.write_allowed:
+            return True
+        Messagebox.show_info("Sie haben keine Schreibrechte für Produkte.", "Keine Berechtigung")
+        return False
 
     def selected_product_id(self) -> Optional[int]:
         if not self.table.view.focus():
@@ -439,12 +484,16 @@ class ProductsView(ttkb.Frame):
             )
 
     def create_product(self) -> None:
+        if not self._require_write():
+            return
         editor = ProductEditor(self, self.db)
         self.wait_window(editor)
         if editor.saved:
             self.refresh()
 
     def edit_product(self) -> None:
+        if not self._require_write():
+            return
         product_id = self.selected_product_id()
         if not product_id:
             return
@@ -463,6 +512,8 @@ class ProductsView(ttkb.Frame):
         self._open_product_tab("repairs")
 
     def _open_product_tab(self, tab_name: str) -> None:
+        if not self._require_write():
+            return
         product_id = self.selected_product_id()
         if not product_id:
             return
@@ -472,6 +523,8 @@ class ProductsView(ttkb.Frame):
             self.refresh()
 
     def retire_product(self) -> None:
+        if not self._require_write():
+            return
         product_id = self.selected_product_id()
         if not product_id:
             return
@@ -570,11 +623,16 @@ class VehiclesView(ttkb.Frame):
         self.locations = self.db.list_locations()
         self.vehicle_models = self.db.list_vehicle_models()
         self.vehicle_categories = self.db.list_vehicle_categories()
+        self.write_allowed = True
 
         toolbar = ttkb.Frame(self)
         toolbar.pack(fill=tk.X, padx=10, pady=10)
-        ttkb.Button(toolbar, text="Neu", command=self.create_vehicle, bootstyle="success").pack(side=LEFT)
-        ttkb.Button(toolbar, text="Bearbeiten", command=self.edit_vehicle, bootstyle="secondary").pack(side=LEFT, padx=5)
+        self.new_button = ttkb.Button(toolbar, text="Neu", command=self.create_vehicle, bootstyle="success")
+        self.new_button.pack(side=LEFT)
+        self.edit_button = ttkb.Button(toolbar, text="Bearbeiten", command=self.edit_vehicle, bootstyle="secondary")
+        self.edit_button.pack(side=LEFT, padx=5)
+
+        self._write_buttons = [self.new_button, self.edit_button]
 
         filter_frame = ttkb.Frame(self)
         filter_frame.pack(fill=tk.X, padx=10)
@@ -634,6 +692,18 @@ class VehiclesView(ttkb.Frame):
         self.table = Tableview(self, coldata=columns, rowdata=[], pagesize=15)
         self.table.pack(fill=BOTH, expand=True, padx=10, pady=10)
         self.table.bind("<Double-1>", lambda _event: self.edit_vehicle())
+
+    def set_write_permissions(self, allowed: bool) -> None:
+        self.write_allowed = allowed
+        state = tk.NORMAL if allowed else tk.DISABLED
+        for widget in self._write_buttons:
+            widget.configure(state=state)
+
+    def _require_write(self) -> bool:
+        if self.write_allowed:
+            return True
+        Messagebox.show_info("Sie haben keine Schreibrechte für Fahrzeuge.", "Keine Berechtigung")
+        return False
 
     def selected_vehicle_id(self) -> Optional[int]:
         if not self.table.view.focus():
@@ -698,12 +768,16 @@ class VehiclesView(ttkb.Frame):
             )
 
     def create_vehicle(self) -> None:
+        if not self._require_write():
+            return
         editor = VehicleEditor(self, self.db)
         self.wait_window(editor)
         if editor.saved:
             self.refresh()
 
     def edit_vehicle(self) -> None:
+        if not self._require_write():
+            return
         vehicle_id = self.selected_vehicle_id()
         if not vehicle_id:
             return
@@ -726,11 +800,16 @@ class MaterialsView(ttkb.Frame):
     def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
         super().__init__(master)
         self.db = db
+        self.write_allowed = True
 
         toolbar = ttkb.Frame(self)
         toolbar.pack(fill=tk.X, padx=10, pady=10)
-        ttkb.Button(toolbar, text="Neu", command=self.create_material, bootstyle="success").pack(side=LEFT)
-        ttkb.Button(toolbar, text="Bearbeiten", command=self.edit_material, bootstyle="secondary").pack(side=LEFT, padx=5)
+        self.new_button = ttkb.Button(toolbar, text="Neu", command=self.create_material, bootstyle="success")
+        self.new_button.pack(side=LEFT)
+        self.edit_button = ttkb.Button(toolbar, text="Bearbeiten", command=self.edit_material, bootstyle="secondary")
+        self.edit_button.pack(side=LEFT, padx=5)
+
+        self._write_buttons = [self.new_button, self.edit_button]
 
         columns = [
             {"text": "ID"},
@@ -744,6 +823,18 @@ class MaterialsView(ttkb.Frame):
         self.table = Tableview(self, coldata=columns, rowdata=[], pagesize=15)
         self.table.pack(fill=BOTH, expand=True, padx=10, pady=10)
         self.table.bind("<Double-1>", lambda _event: self.edit_material())
+
+    def set_write_permissions(self, allowed: bool) -> None:
+        self.write_allowed = allowed
+        state = tk.NORMAL if allowed else tk.DISABLED
+        for widget in self._write_buttons:
+            widget.configure(state=state)
+
+    def _require_write(self) -> bool:
+        if self.write_allowed:
+            return True
+        Messagebox.show_info("Sie haben keine Schreibrechte für Material.", "Keine Berechtigung")
+        return False
 
     def selected_material_id(self) -> Optional[int]:
         if not self.table.view.focus():
@@ -774,12 +865,16 @@ class MaterialsView(ttkb.Frame):
             )
 
     def create_material(self) -> None:
+        if not self._require_write():
+            return
         editor = MaterialEditor(self, self.db)
         self.wait_window(editor)
         if editor.saved:
             self.refresh()
 
     def edit_material(self) -> None:
+        if not self._require_write():
+            return
         material_id = self.selected_material_id()
         if not material_id:
             return
@@ -1036,7 +1131,14 @@ class AnalyticsView(ttkb.Frame):
         Messagebox.show_info("Export abgeschlossen", "Erfolg")
 
 class MasterDataView(ttkb.Frame):
-    def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
+    def __init__(
+        self,
+        master: tk.Misc,
+        db: DatabaseManager,
+        *,
+        show_locations: bool = True,
+        allow_edit_locations: bool = True,
+    ) -> None:
         super().__init__(master)
         self.db = db
 
@@ -1046,8 +1148,11 @@ class MasterDataView(ttkb.Frame):
         self.categories_frame = CategoriesFrame(notebook, db)
         notebook.add(self.categories_frame, text="Kategorien")
 
-        self.locations_frame = LocationsFrame(notebook, db)
-        notebook.add(self.locations_frame, text="Standorte")
+        self.locations_frame: Optional[LocationsFrame] = None
+        if show_locations:
+            self.locations_frame = LocationsFrame(notebook, db)
+            self.locations_frame.set_write_permissions(allow_edit_locations)
+            notebook.add(self.locations_frame, text="Standorte")
 
         self.contacts_frame = ContactsFrame(notebook, db)
         notebook.add(self.contacts_frame, text="Kontakte")
@@ -1084,7 +1189,8 @@ class MasterDataView(ttkb.Frame):
 
     def refresh(self) -> None:
         self.categories_frame.refresh()
-        self.locations_frame.refresh()
+        if self.locations_frame:
+            self.locations_frame.refresh()
         self.contacts_frame.refresh()
         self.product_types_frame.refresh()
         self.product_models_frame.refresh()
@@ -1136,16 +1242,18 @@ class LocationsFrame(ttkb.Frame):
     def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
         super().__init__(master)
         self.db = db
+        self.write_allowed = True
 
         toolbar = ttkb.Frame(self)
         toolbar.pack(fill=tk.X, padx=10, pady=(10, 0))
-        ttkb.Button(toolbar, text="Neuer Standort", command=self.add_location, bootstyle="success").pack(
-            side=LEFT
-        )
-        ttkb.Button(toolbar, text="Bearbeiten", command=self.edit_location, bootstyle="secondary").pack(
-            side=LEFT, padx=5
-        )
-        ttkb.Button(toolbar, text="Löschen", command=self.delete_location, bootstyle="danger").pack(side=LEFT)
+        self.add_button = ttkb.Button(toolbar, text="Neuer Standort", command=self.add_location, bootstyle="success")
+        self.add_button.pack(side=LEFT)
+        self.edit_button = ttkb.Button(toolbar, text="Bearbeiten", command=self.edit_location, bootstyle="secondary")
+        self.edit_button.pack(side=LEFT, padx=5)
+        self.delete_button = ttkb.Button(toolbar, text="Löschen", command=self.delete_location, bootstyle="danger")
+        self.delete_button.pack(side=LEFT)
+
+        self._write_buttons = [self.add_button, self.edit_button, self.delete_button]
 
         filter_frame = ttkb.Labelframe(self, text="Filter")
         filter_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
@@ -1177,6 +1285,18 @@ class LocationsFrame(ttkb.Frame):
         ]
         self.table = Tableview(self, coldata=columns, rowdata=[], pagesize=20)
         self.table.pack(fill=BOTH, expand=True, padx=10, pady=10)
+
+    def set_write_permissions(self, allowed: bool) -> None:
+        self.write_allowed = allowed
+        state = tk.NORMAL if allowed else tk.DISABLED
+        for widget in self._write_buttons:
+            widget.configure(state=state)
+
+    def _require_write(self) -> bool:
+        if self.write_allowed:
+            return True
+        Messagebox.show_info("Sie haben keine Schreibrechte für Standorte.", "Keine Berechtigung")
+        return False
 
     def refresh(self) -> None:
         self._all_locations = [
@@ -1226,6 +1346,8 @@ class LocationsFrame(ttkb.Frame):
             )
 
     def add_location(self) -> None:
+        if not self._require_write():
+            return
         fields = ["Land", "Bereich", "Bezirk", "Bezirksstelle", "Ortsstelle", "Beschreibung"]
         dialog = SimpleEntryDialog(self, "Neuer Standort", fields)
         self.wait_window(dialog)
@@ -1235,6 +1357,8 @@ class LocationsFrame(ttkb.Frame):
             self.refresh()
 
     def edit_location(self) -> None:
+        if not self._require_write():
+            return
         location_id = self._selected_location_id()
         if not location_id:
             return
@@ -1268,6 +1392,8 @@ class LocationsFrame(ttkb.Frame):
         self.refresh()
 
     def delete_location(self) -> None:
+        if not self._require_write():
+            return
         location_id = self._selected_location_id()
         if not location_id:
             return
@@ -1737,6 +1863,7 @@ class UsersFrame(ttkb.Frame):
                 nachname=nachname,
                 dienstnummer=dienstnummer,
                 rolle=rolle,
+                permissions=dialog.permissions,
             )
         except (ValueError, sqlite3.IntegrityError) as exc:
             Messagebox.show_error(str(exc), "Fehler")
@@ -1754,6 +1881,7 @@ class UsersFrame(ttkb.Frame):
             nachname=row["nachname"] or "",
             dienstnummer=row["dienstnummer"] or "",
             rolle=row["role"],
+            permissions={column: bool(row[column]) for column in PERMISSION_COLUMNS},
         )
         self.wait_window(dialog)
         if not dialog.result:
@@ -1766,6 +1894,7 @@ class UsersFrame(ttkb.Frame):
                 nachname=nachname,
                 dienstnummer=dienstnummer,
                 rolle=rolle,
+                permissions=dialog.permissions,
             )
         except (ValueError, sqlite3.IntegrityError) as exc:
             Messagebox.show_error(str(exc), "Fehler")
@@ -2012,11 +2141,13 @@ class UserDialog(ttkb.Toplevel):
         nachname: str = "",
         dienstnummer: str = "",
         rolle: str = "benutzer",
+        permissions: Optional[Dict[str, bool]] = None,
     ) -> None:
         super().__init__(master)
         self.title("Benutzer")
         self.resizable(False, False)
         self.result: Optional[Tuple[str, str, str, str]] = None
+        self.permissions: Dict[str, bool] = {}
 
         container = ttkb.Frame(self, padding=20)
         container.pack(fill=BOTH, expand=True)
@@ -2043,8 +2174,39 @@ class UserDialog(ttkb.Toplevel):
             width=28,
         ).grid(row=3, column=1, sticky=W)
 
+        permission_values = PERMISSION_DEFAULTS.copy()
+        if permissions:
+            for key, value in permissions.items():
+                if key in permission_values:
+                    permission_values[key] = bool(value)
+
+        self.permission_vars: Dict[str, Tuple[ttkb.BooleanVar, ttkb.BooleanVar]] = {}
+        permissions_frame = ttkb.Labelframe(container, text="Berechtigungen")
+        permissions_frame.grid(row=4, column=0, columnspan=2, sticky=W + tk.E, pady=(15, 0))
+
+        for index, (module, label) in enumerate(PERMISSION_MODULES):
+            read_var = ttkb.BooleanVar(value=permission_values[f"{module}_lesen"])
+            write_var = ttkb.BooleanVar(value=permission_values[f"{module}_schreiben"])
+            self.permission_vars[module] = (read_var, write_var)
+            ttkb.Checkbutton(
+                permissions_frame,
+                text=f"{label} lesen",
+                variable=read_var,
+                bootstyle="round-toggle",
+            ).grid(row=index, column=0, sticky=W, padx=5, pady=3)
+            ttkb.Checkbutton(
+                permissions_frame,
+                text=f"{label} schreiben",
+                variable=write_var,
+                bootstyle="round-toggle",
+            ).grid(row=index, column=1, sticky=W, padx=5, pady=3)
+            write_var.trace_add(
+                "write",
+                lambda *_args, r_var=read_var, w_var=write_var: self._on_write_toggle(r_var, w_var),
+            )
+
         button_frame = ttkb.Frame(container)
-        button_frame.grid(row=4, column=0, columnspan=2, pady=(20, 0))
+        button_frame.grid(row=5, column=0, columnspan=2, pady=(20, 0))
         ttkb.Button(button_frame, text="Speichern", command=self.on_save, bootstyle="success").pack(side=LEFT, padx=5)
         ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(side=LEFT, padx=5)
 
@@ -2058,8 +2220,18 @@ class UserDialog(ttkb.Toplevel):
             Messagebox.show_warning("Bitte alle Felder ausfüllen", "Hinweis")
             return
         rolle = self.rolle_var.get() or "benutzer"
+        permission_map: Dict[str, bool] = {}
+        for module, (read_var, write_var) in self.permission_vars.items():
+            permission_map[f"{module}_lesen"] = bool(read_var.get())
+            permission_map[f"{module}_schreiben"] = bool(write_var.get())
+        self.permissions = permission_map
         self.result = (vorname, nachname, dienstnummer, rolle)
         self.destroy()
+
+    @staticmethod
+    def _on_write_toggle(read_var: ttkb.BooleanVar, write_var: ttkb.BooleanVar) -> None:
+        if write_var.get() and not read_var.get():
+            read_var.set(True)
 
 
 class RetireProductDialog(ttkb.Toplevel):
@@ -4190,6 +4362,10 @@ class MedizinprodukteApp(ttkb.Window):
         self.current_theme = "flatly"
         self.font_scale = 1.0
         self.show_welcome_info = True
+        self.products_view: Optional[ProductsView] = None
+        self.vehicles_view: Optional[VehiclesView] = None
+        self.materials_view: Optional[MaterialsView] = None
+        self.views: List[ttkb.Frame] = []
 
         login = LoginDialog(self, self.db)
         self.wait_window(login)
@@ -4243,25 +4419,51 @@ class MedizinprodukteApp(ttkb.Window):
 
         self.notebook = ttkb.Notebook(self)
         self.notebook.pack(fill=BOTH, expand=True)
+        self.views = []
 
         self.dashboard_view = DashboardView(self.notebook, self.db)
         self.notebook.add(self.dashboard_view, text="Dashboard")
         self.dashboard_view.update_palette(self.current_theme in self._dark_themes())
+        self.views.append(self.dashboard_view)
 
-        self.products_view = ProductsView(self.notebook, self.db)
-        self.notebook.add(self.products_view, text="Produkte")
+        if self.user and self.user.can_read("produkte"):
+            self.products_view = ProductsView(self.notebook, self.db)
+            self.products_view.set_write_permissions(self.user.can_write("produkte"))
+            self.notebook.add(self.products_view, text="Produkte")
+            self.views.append(self.products_view)
+        else:
+            self.products_view = None
 
-        self.vehicles_view = VehiclesView(self.notebook, self.db)
-        self.notebook.add(self.vehicles_view, text="Fahrzeuge")
+        if self.user and self.user.can_read("fahrzeuge"):
+            self.vehicles_view = VehiclesView(self.notebook, self.db)
+            self.vehicles_view.set_write_permissions(self.user.can_write("fahrzeuge"))
+            self.notebook.add(self.vehicles_view, text="Fahrzeuge")
+            self.views.append(self.vehicles_view)
+        else:
+            self.vehicles_view = None
 
-        self.materials_view = MaterialsView(self.notebook, self.db)
-        self.notebook.add(self.materials_view, text="Material")
+        if self.user and self.user.can_read("material"):
+            self.materials_view = MaterialsView(self.notebook, self.db)
+            self.materials_view.set_write_permissions(self.user.can_write("material"))
+            self.notebook.add(self.materials_view, text="Material")
+            self.views.append(self.materials_view)
+        else:
+            self.materials_view = None
 
         self.analytics_view = AnalyticsView(self.notebook, self.db)
         self.notebook.add(self.analytics_view, text="Auswertung")
+        self.views.append(self.analytics_view)
 
-        self.master_view = MasterDataView(self.notebook, self.db)
+        show_locations = self.user.can_read("standorte") if self.user else True
+        allow_edit_locations = self.user.can_write("standorte") if self.user else True
+        self.master_view = MasterDataView(
+            self.notebook,
+            self.db,
+            show_locations=show_locations,
+            allow_edit_locations=allow_edit_locations,
+        )
         self.notebook.add(self.master_view, text="Stammdaten")
+        self.views.append(self.master_view)
 
         self.notebook.bind("<<NotebookTabChanged>>", lambda _event: self.refresh_current())
 
@@ -4272,14 +4474,7 @@ class MedizinprodukteApp(ttkb.Window):
             widget.refresh()  # type: ignore[call-arg]
 
     def refresh_all(self) -> None:
-        for view in [
-            self.dashboard_view,
-            self.products_view,
-            self.vehicles_view,
-            self.materials_view,
-            self.analytics_view,
-            self.master_view,
-        ]:
+        for view in self.views:
             if hasattr(view, "refresh"):
                 view.refresh()  # type: ignore[call-arg]
 

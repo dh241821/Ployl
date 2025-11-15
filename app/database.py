@@ -23,6 +23,22 @@ STATUS_LABELS: Dict[str, str] = {
 }
 
 
+PERMISSION_MODULES: List[Tuple[str, str]] = [
+    ("standorte", "Standorte"),
+    ("produkte", "Produkte"),
+    ("material", "Material"),
+    ("fahrzeuge", "Fahrzeuge"),
+]
+
+PERMISSION_COLUMNS: List[str] = [
+    f"{module}_{suffix}"
+    for module, _label in PERMISSION_MODULES
+    for suffix in ("lesen", "schreiben")
+]
+
+PERMISSION_DEFAULTS: Dict[str, bool] = {column: True for column in PERMISSION_COLUMNS}
+
+
 @dataclass
 class User:
     """Represents an authenticated user."""
@@ -31,6 +47,24 @@ class User:
     username: str
     full_name: str
     role: str
+    standorte_lesen: bool
+    standorte_schreiben: bool
+    produkte_lesen: bool
+    produkte_schreiben: bool
+    material_lesen: bool
+    material_schreiben: bool
+    fahrzeuge_lesen: bool
+    fahrzeuge_schreiben: bool
+
+    def can_read(self, module: str) -> bool:
+        """Return whether the user is allowed to read the given module."""
+
+        return bool(getattr(self, f"{module}_lesen", False))
+
+    def can_write(self, module: str) -> bool:
+        """Return whether the user is allowed to write the given module."""
+
+        return bool(getattr(self, f"{module}_schreiben", False))
 
 
 class DatabaseManager:
@@ -63,7 +97,15 @@ class DatabaseManager:
                     role TEXT NOT NULL CHECK(role IN ('admin', 'benutzer')),
                     vorname TEXT,
                     nachname TEXT,
-                    dienstnummer TEXT
+                    dienstnummer TEXT,
+                    standorte_lesen INTEGER NOT NULL DEFAULT 1,
+                    standorte_schreiben INTEGER NOT NULL DEFAULT 1,
+                    produkte_lesen INTEGER NOT NULL DEFAULT 1,
+                    produkte_schreiben INTEGER NOT NULL DEFAULT 1,
+                    material_lesen INTEGER NOT NULL DEFAULT 1,
+                    material_schreiben INTEGER NOT NULL DEFAULT 1,
+                    fahrzeuge_lesen INTEGER NOT NULL DEFAULT 1,
+                    fahrzeuge_schreiben INTEGER NOT NULL DEFAULT 1
                 );
 
                 CREATE TABLE IF NOT EXISTS kategorien (
@@ -313,6 +355,8 @@ class DatabaseManager:
         self._ensure_column("benutzer", "vorname", "TEXT")
         self._ensure_column("benutzer", "nachname", "TEXT")
         self._ensure_column("benutzer", "dienstnummer", "TEXT")
+        for column in PERMISSION_COLUMNS:
+            self._ensure_column("benutzer", column, "INTEGER NOT NULL DEFAULT 1")
 
         self._ensure_column("kontakte", "unternehmen", "TEXT")
         self._ensure_column("kontakte", "website", "TEXT")
@@ -445,12 +489,15 @@ class DatabaseManager:
             if count:
                 return
             password_hash = self.hash_password("admin")
+            columns_sql = ", ".join(PERMISSION_COLUMNS)
+            placeholders = ", ".join(["?"] * len(PERMISSION_COLUMNS))
+            permission_values = [1 if PERMISSION_DEFAULTS[column] else 0 for column in PERMISSION_COLUMNS]
             self.connection.execute(
-                """
-                INSERT INTO benutzer (username, password_hash, full_name, role, vorname, nachname, dienstnummer)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                f"""
+                INSERT INTO benutzer (username, password_hash, full_name, role, vorname, nachname, dienstnummer, {columns_sql})
+                VALUES (?, ?, ?, ?, ?, ?, ?, {placeholders})
                 """,
-                ("admin", password_hash, "Administrator", "admin", "Admin", "Account", "0000"),
+                ("admin", password_hash, "Administrator", "admin", "Admin", "Account", "0000", *permission_values),
             )
 
     # ------------------------------------------------------------------
@@ -476,10 +523,11 @@ class DatabaseManager:
         self, username: str, password: str, *, identifier: Optional[str] = None
     ) -> Optional[User]:
         row: Optional[sqlite3.Row] = None
+        columns_sql = ", ".join(PERMISSION_COLUMNS)
         if identifier:
             row = self.connection.execute(
-                """
-                SELECT id, username, full_name, role, password_hash
+                f"""
+                SELECT id, username, full_name, role, password_hash, {columns_sql}
                 FROM benutzer
                 WHERE dienstnummer = ? COLLATE NOCASE
                 """,
@@ -487,14 +535,21 @@ class DatabaseManager:
             ).fetchone()
         if not row:
             row = self.connection.execute(
-                "SELECT id, username, full_name, role, password_hash FROM benutzer WHERE username = ?",
+                f"SELECT id, username, full_name, role, password_hash, {columns_sql} FROM benutzer WHERE username = ?",
                 (username,),
             ).fetchone()
         if not row:
             return None
         if row["password_hash"] != self.hash_password(password):
             return None
-        return User(id=row["id"], username=row["username"], full_name=row["full_name"], role=row["role"])
+        permission_kwargs = {column: bool(row[column]) for column in PERMISSION_COLUMNS}
+        return User(
+            id=row["id"],
+            username=row["username"],
+            full_name=row["full_name"],
+            role=row["role"],
+            **permission_kwargs,
+        )
 
     def list_user_identifiers(self) -> List[Dict[str, str]]:
         rows = self.connection.execute(
@@ -1522,17 +1577,25 @@ class DatabaseManager:
         nachname: str,
         dienstnummer: str,
         rolle: str,
+        permissions: Optional[Dict[str, bool]] = None,
     ) -> int:
         username = dienstnummer.strip()
         if not username:
             raise ValueError("Dienstnummer darf nicht leer sein")
         full_name = f"{vorname.strip()} {nachname.strip()}".strip()
+        merged_permissions = PERMISSION_DEFAULTS.copy()
+        if permissions:
+            for key, value in permissions.items():
+                if key in merged_permissions:
+                    merged_permissions[key] = bool(value)
+        permission_values = [1 if merged_permissions[column] else 0 for column in PERMISSION_COLUMNS]
         with self.connection:
             if benutzer_id:
+                set_clause = ", ".join(f"{column} = ?" for column in PERMISSION_COLUMNS)
                 self.connection.execute(
-                    """
+                    f"""
                     UPDATE benutzer
-                    SET username = ?, full_name = ?, role = ?, vorname = ?, nachname = ?, dienstnummer = ?
+                    SET username = ?, full_name = ?, role = ?, vorname = ?, nachname = ?, dienstnummer = ?, {set_clause}
                     WHERE id = ?
                     """,
                     (
@@ -1542,14 +1605,17 @@ class DatabaseManager:
                         vorname,
                         nachname,
                         dienstnummer,
+                        *permission_values,
                         benutzer_id,
                     ),
                 )
                 return benutzer_id
+            columns_sql = ", ".join(PERMISSION_COLUMNS)
+            placeholders = ", ".join(["?"] * len(PERMISSION_COLUMNS))
             cur = self.connection.execute(
-                """
-                INSERT INTO benutzer (username, password_hash, full_name, role, vorname, nachname, dienstnummer)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                f"""
+                INSERT INTO benutzer (username, password_hash, full_name, role, vorname, nachname, dienstnummer, {columns_sql})
+                VALUES (?, ?, ?, ?, ?, ?, ?, {placeholders})
                 """,
                 (
                     username,
@@ -1559,6 +1625,7 @@ class DatabaseManager:
                     vorname,
                     nachname,
                     dienstnummer,
+                    *permission_values,
                 ),
             )
             return int(cur.lastrowid)
