@@ -167,6 +167,11 @@ class DatabaseManager:
                     FOREIGN KEY(typ_id) REFERENCES produkt_typen(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS produkt_hersteller (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE
+                );
+
                 CREATE TABLE IF NOT EXISTS komponententypen (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL UNIQUE
@@ -373,6 +378,7 @@ class DatabaseManager:
 
         self._seed_defaults()
         self._ensure_columns()
+        self._backfill_product_manufacturers()
 
     def _ensure_columns(self) -> None:
         self._ensure_column("produkte", "naechste_stk", "TEXT")
@@ -382,6 +388,11 @@ class DatabaseManager:
         self._ensure_column("produkte", "lagerort", "TEXT")
         self._ensure_column("produkte", "produkt_typ_id", "INTEGER REFERENCES produkt_typen(id)")
         self._ensure_column("produkte", "produkt_modell_id", "INTEGER REFERENCES produkt_modelle(id)")
+        self._ensure_column(
+            "produkte",
+            "produkt_hersteller_id",
+            "INTEGER REFERENCES produkt_hersteller(id)",
+        )
         self._ensure_column("produkte", "informationstext", "TEXT")
 
         self._ensure_column("fahrzeuge", "ausserbetrieb", "INTEGER NOT NULL DEFAULT 0")
@@ -402,6 +413,47 @@ class DatabaseManager:
         self._ensure_column("kontakte", "unternehmen", "TEXT")
         self._ensure_column("kontakte", "website", "TEXT")
         self._ensure_column("kontakte", "info", "TEXT")
+
+    def _backfill_product_manufacturers(self) -> None:
+        with self.connection:
+            existing: Dict[str, int] = {
+                row["name"]: int(row["id"])
+                for row in self.connection.execute(
+                    "SELECT id, name FROM produkt_hersteller"
+                )
+            }
+            for (name,) in self.connection.execute(
+                "SELECT DISTINCT hersteller FROM produkte "
+                "WHERE hersteller IS NOT NULL AND TRIM(hersteller) <> ''"
+            ):
+                trimmed = name.strip()
+                if trimmed and trimmed not in existing:
+                    cur = self.connection.execute(
+                        "INSERT OR IGNORE INTO produkt_hersteller (name) VALUES (?)",
+                        (trimmed,),
+                    )
+                    if cur.lastrowid:
+                        existing[trimmed] = int(cur.lastrowid)
+                    else:
+                        row = self.connection.execute(
+                            "SELECT id FROM produkt_hersteller WHERE name = ?",
+                            (trimmed,),
+                        ).fetchone()
+                        if row:
+                            existing[trimmed] = int(row["id"])
+
+            for row in self.connection.execute(
+                "SELECT id, hersteller FROM produkte "
+                "WHERE produkt_hersteller_id IS NULL AND hersteller IS NOT NULL "
+                "AND TRIM(hersteller) <> ''"
+            ):
+                hersteller_name = row["hersteller"].strip()
+                hersteller_id = existing.get(hersteller_name)
+                if hersteller_id:
+                    self.connection.execute(
+                        "UPDATE produkte SET produkt_hersteller_id = ? WHERE id = ?",
+                        (hersteller_id, row["id"]),
+                    )
 
     def _seed_defaults(self) -> None:
         with self.connection:
@@ -684,6 +736,26 @@ class DatabaseManager:
             self.connection.execute(
                 "DELETE FROM produkt_modelle WHERE id = ?",
                 (modell_id,),
+            )
+
+    def list_product_manufacturers(self) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute("SELECT * FROM produkt_hersteller ORDER BY name")
+        )
+
+    def add_product_manufacturer(self, name: str) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                "INSERT INTO produkt_hersteller (name) VALUES (?)",
+                (name,),
+            )
+            return int(cur.lastrowid)
+
+    def delete_product_manufacturer(self, hersteller_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM produkt_hersteller WHERE id = ?",
+                (hersteller_id,),
             )
 
     def list_component_types(self) -> List[sqlite3.Row]:
@@ -1114,13 +1186,15 @@ class DatabaseManager:
                        COALESCE(s.ortsstelle, s.bezirksstelle, s.bezirk, s.bereich, s.land, '') AS standort_name,
                        f.name AS fahrzeug_name,
                        pt.name AS produkt_typ_name,
-                       pm.name AS produkt_modell_name
+                       pm.name AS produkt_modell_name,
+                       ph.name AS produkt_hersteller_name
                 FROM produkte AS p
                 LEFT JOIN kategorien AS k ON k.id = p.kategorie_id
                 LEFT JOIN standorte AS s ON s.id = p.standort_id
                 LEFT JOIN fahrzeuge AS f ON f.id = p.fahrzeug_id
                 LEFT JOIN produkt_typen AS pt ON pt.id = p.produkt_typ_id
                 LEFT JOIN produkt_modelle AS pm ON pm.id = p.produkt_modell_id
+                LEFT JOIN produkt_hersteller AS ph ON ph.id = p.produkt_hersteller_id
                 ORDER BY p.name
                 """
             )
@@ -1139,13 +1213,15 @@ class DatabaseManager:
                    COALESCE(s.ortsstelle, s.bezirksstelle, s.bezirk, s.bereich, s.land, '') AS standort_name,
                    f.name AS fahrzeug_name,
                    pt.name AS produkt_typ_name,
-                   pm.name AS produkt_modell_name
+                   pm.name AS produkt_modell_name,
+                   ph.name AS produkt_hersteller_name
             FROM produkte AS p
             LEFT JOIN kategorien AS k ON k.id = p.kategorie_id
             LEFT JOIN standorte AS s ON s.id = p.standort_id
             LEFT JOIN fahrzeuge AS f ON f.id = p.fahrzeug_id
             LEFT JOIN produkt_typen AS pt ON pt.id = p.produkt_typ_id
             LEFT JOIN produkt_modelle AS pm ON pm.id = p.produkt_modell_id
+            LEFT JOIN produkt_hersteller AS ph ON ph.id = p.produkt_hersteller_id
             WHERE p.id = ?
             """,
             (produkt_id,),
@@ -1176,6 +1252,7 @@ class DatabaseManager:
         lagerort: str,
         produkt_typ_id: Optional[int],
         produkt_modell_id: Optional[int],
+        produkt_hersteller_id: Optional[int],
         informationstext: str,
     ) -> int:
         anschaffungsdatum_str = self._format_date(anschaffungsdatum)
@@ -1194,7 +1271,7 @@ class DatabaseManager:
                         kategorie_id = ?, standort_id = ?, fahrzeug_id = ?, status = ?, interne_kennung = ?,
                         stk_intervall = ?, mtk_intervall = ?, letzte_stk = ?, letzte_mtk = ?, naechste_stk = ?,
                         naechste_mtk = ?, stk_aktiv = ?, mtk_aktiv = ?, lagerort = ?, produkt_typ_id = ?,
-                        produkt_modell_id = ?, informationstext = ?
+                        produkt_modell_id = ?, produkt_hersteller_id = ?, informationstext = ?
                     WHERE id = ?
                     """,
                     (
@@ -1219,6 +1296,7 @@ class DatabaseManager:
                         lagerort,
                         produkt_typ_id,
                         produkt_modell_id,
+                        produkt_hersteller_id,
                         informationstext,
                         produkt_id,
                     ),
@@ -1231,9 +1309,9 @@ class DatabaseManager:
                     name, typ, seriennummer, hersteller, anschaffungsdatum, kategorie_id, standort_id,
                     fahrzeug_id, status, interne_kennung, stk_intervall, mtk_intervall, letzte_stk,
                     letzte_mtk, naechste_stk, naechste_mtk, stk_aktiv, mtk_aktiv, lagerort, produkt_typ_id,
-                    produkt_modell_id, informationstext
+                    produkt_modell_id, produkt_hersteller_id, informationstext
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -1257,6 +1335,7 @@ class DatabaseManager:
                     lagerort,
                     produkt_typ_id,
                     produkt_modell_id,
+                    produkt_hersteller_id,
                     informationstext,
                 ),
             )

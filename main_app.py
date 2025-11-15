@@ -525,6 +525,7 @@ class ProductsView(ttkb.Frame):
                         row["name"],
                         row["seriennummer"],
                         row["hersteller"],
+                        row.get("produkt_hersteller_name", ""),
                         row["standort_name"],
                         row["fahrzeug_name"],
                         row["status"],
@@ -1356,6 +1357,9 @@ class MasterDataView(ttkb.Frame):
         self.product_models_frame = ProductModelsFrame(notebook, db)
         notebook.add(self.product_models_frame, text="Produktmodelle")
 
+        self.product_manufacturers_frame = ProductManufacturersFrame(notebook, db)
+        notebook.add(self.product_manufacturers_frame, text="Hersteller")
+
         self.component_types_frame = ComponentTypesFrame(notebook, db)
         notebook.add(self.component_types_frame, text="Komponententypen")
 
@@ -1387,6 +1391,7 @@ class MasterDataView(ttkb.Frame):
         self.contacts_frame.refresh()
         self.product_types_frame.refresh()
         self.product_models_frame.refresh()
+        self.product_manufacturers_frame.refresh()
         self.component_types_frame.refresh()
         self.repair_types_frame.refresh()
         self.upload_categories_frame.refresh()
@@ -1940,6 +1945,20 @@ class ProductModelsFrame(ttkb.Frame):
         if Messagebox.okcancel("Modell wirklich löschen?", "Bestätigung"):
             self.db.delete_product_model(model_id)
             self.refresh()
+
+
+class ProductManufacturersFrame(SimpleLookupFrame):
+    def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
+        super().__init__(
+            master,
+            db,
+            fetch_fn=db.list_product_manufacturers,
+            add_fn=db.add_product_manufacturer,
+            delete_fn=db.delete_product_manufacturer,
+            title="Hersteller",
+            column_key="name",
+            label="Hersteller",
+        )
 
 
 class VehicleModelsFrame(ttkb.Frame):
@@ -2804,6 +2823,7 @@ class ProductEditor(ttkb.Toplevel):
         self.categories = db.list_categories("produkt")
         self.product_types = db.list_product_types()
         self.product_models = db.list_product_models()
+        self.product_manufacturers = db.list_product_manufacturers()
         all_locations = db.list_locations()
         if user and user.location_permissions:
             allowed_ids = {loc_id for loc_id, perm in user.location_permissions.items() if perm.schreiben}
@@ -2825,6 +2845,10 @@ class ProductEditor(ttkb.Toplevel):
         self.model_index: Dict[int, List[Tuple[int, str]]] = {}
         for model in self.product_models:
             self.model_index.setdefault(model["typ_id"], []).append((model["id"], model["name"]))
+
+        self.manufacturer_index: Dict[str, int] = {
+            row["name"]: int(row["id"]) for row in self.product_manufacturers
+        }
 
         container = ttkb.Frame(self, padding=15)
         container.pack(fill=BOTH, expand=True)
@@ -2910,7 +2934,8 @@ class ProductEditor(ttkb.Toplevel):
         info_frame.pack(fill=BOTH, expand=True, padx=5, pady=5)
 
         ttkb.Label(info_frame, text="Bezeichnung*").grid(row=0, column=0, sticky=W, pady=4)
-        ttkb.Entry(info_frame, textvariable=self.name_var, width=40).grid(row=0, column=1, sticky=W)
+        self.name_entry = ttkb.Entry(info_frame, textvariable=self.name_var, width=40, state="readonly")
+        self.name_entry.grid(row=0, column=1, sticky=W)
 
         ttkb.Label(info_frame, text="Produkttyp").grid(row=1, column=0, sticky=W, pady=4)
         self.typ_box = ttkb.Combobox(
@@ -2921,14 +2946,21 @@ class ProductEditor(ttkb.Toplevel):
             state="readonly",
         )
         self.typ_box.grid(row=1, column=1, sticky=W)
-        self.typ_box.bind("<<ComboboxSelected>>", lambda _event: self._update_model_choices())
+        self.typ_box.bind("<<ComboboxSelected>>", self._on_type_selected)
 
         ttkb.Label(info_frame, text="Modell").grid(row=2, column=0, sticky=W, pady=4)
         self.modell_box = ttkb.Combobox(info_frame, textvariable=self.modell_var, width=37, state="readonly")
         self.modell_box.grid(row=2, column=1, sticky=W)
+        self.modell_box.bind("<<ComboboxSelected>>", lambda _event: self._update_name_from_type_model())
 
         ttkb.Label(info_frame, text="Hersteller").grid(row=3, column=0, sticky=W, pady=4)
-        ttkb.Entry(info_frame, textvariable=self.hersteller_var, width=40).grid(row=3, column=1, sticky=W)
+        self.hersteller_box = ttkb.Combobox(
+            info_frame,
+            textvariable=self.hersteller_var,
+            width=37,
+        )
+        self.hersteller_box.grid(row=3, column=1, sticky=W)
+        self._refresh_manufacturer_choices()
 
         ttkb.Label(info_frame, text="Anschaffungsdatum (TT.MM.JJJJ)").grid(row=4, column=0, sticky=W, pady=4)
         self.anschaffungsdatum_entry = DateEntry(
@@ -3105,6 +3137,21 @@ class ProductEditor(ttkb.Toplevel):
                 self.modell_var.set(options[0][1])
         else:
             self.modell_var.set("")
+        self._update_name_from_type_model()
+
+    def _on_type_selected(self, _event: Optional[tk.Event] = None) -> None:  # type: ignore[override]
+        self._update_model_choices()
+
+    def _update_name_from_type_model(self) -> None:
+        typ = self.typ_var.get().strip()
+        modell = self.modell_var.get().strip()
+        parts = [value for value in (typ, modell) if value]
+        self.name_var.set(" ".join(parts))
+
+    def _refresh_manufacturer_choices(self) -> None:
+        if hasattr(self, "hersteller_box"):
+            values = sorted(self.manufacturer_index.keys())
+            self.hersteller_box.configure(values=values)
 
     def _update_stk_state(self) -> None:
         state = tk.NORMAL if self.stk_active.get() else tk.DISABLED
@@ -3171,13 +3218,20 @@ class ProductEditor(ttkb.Toplevel):
             Messagebox.show_error("Produkt nicht gefunden", "Fehler")
             self.destroy()
             return
-        self.name_var.set(product["name"] or "")
+        existing_name = product["name"] or ""
+        self.name_var.set(existing_name)
         self.typ_var.set(product["produkt_typ_name"] or product["typ"] or "")
         self._update_model_choices()
         if product["produkt_modell_name"]:
             self.modell_var.set(product["produkt_modell_name"])
+        if existing_name:
+            self.name_var.set(existing_name)
         self.seriennummer_var.set(product["seriennummer"] or "")
-        self.hersteller_var.set(product["hersteller"] or "")
+        self.hersteller_var.set(
+            product["produkt_hersteller_name"]
+            or product["hersteller"]
+            or ""
+        )
         self.anschaffungsdatum_var.set(format_date(product["anschaffungsdatum"]))
         if not self.anschaffungsdatum_var.get():
             self.anschaffungsdatum_entry.entry.delete(0, tk.END)
@@ -3323,6 +3377,26 @@ class ProductEditor(ttkb.Toplevel):
         informationstext = self.info_text.get("1.0", tk.END).strip()
         status_value = STATUS_LABEL_TO_VALUE.get(self.status_var.get(), "im_dienst")
 
+        hersteller_name = self.hersteller_var.get().strip()
+        produkt_hersteller_id: Optional[int] = None
+        if hersteller_name:
+            produkt_hersteller_id = self.manufacturer_index.get(hersteller_name)
+            if not produkt_hersteller_id:
+                try:
+                    produkt_hersteller_id = self.db.add_product_manufacturer(hersteller_name)
+                except sqlite3.IntegrityError:
+                    row = next(
+                        (row for row in self.db.list_product_manufacturers() if row["name"] == hersteller_name),
+                        None,
+                    )
+                    if row:
+                        produkt_hersteller_id = int(row["id"])
+                self.product_manufacturers = self.db.list_product_manufacturers()
+                self.manufacturer_index = {
+                    row["name"]: int(row["id"]) for row in self.product_manufacturers
+                }
+                self._refresh_manufacturer_choices()
+
         was_new = self.produkt_id is None
 
         try:
@@ -3349,6 +3423,7 @@ class ProductEditor(ttkb.Toplevel):
                 lagerort=lagerort,
                 produkt_typ_id=produkt_typ_id,
                 produkt_modell_id=produkt_modell_id,
+                produkt_hersteller_id=produkt_hersteller_id,
                 informationstext=informationstext,
             )
         except Exception as exc:  # pragma: no cover
