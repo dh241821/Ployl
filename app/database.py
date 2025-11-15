@@ -61,6 +61,7 @@ class User:
     username: str
     full_name: str
     role: str
+    email: str
     standorte_lesen: bool
     standorte_schreiben: bool
     produkte_lesen: bool
@@ -133,6 +134,7 @@ class DatabaseManager:
                     vorname TEXT,
                     nachname TEXT,
                     dienstnummer TEXT,
+                    email TEXT,
                     standorte_lesen INTEGER NOT NULL DEFAULT 1,
                     standorte_schreiben INTEGER NOT NULL DEFAULT 1,
                     produkte_lesen INTEGER NOT NULL DEFAULT 1,
@@ -369,6 +371,68 @@ class DatabaseManager:
                     FOREIGN KEY(kategorie_id) REFERENCES kategorien(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS bestellungen (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    erstellt_am TEXT NOT NULL,
+                    erstellt_von INTEGER,
+                    status TEXT NOT NULL,
+                    standort_id INTEGER,
+                    genehmigt_am TEXT,
+                    abgeschlossen_am TEXT,
+                    bemerkung TEXT,
+                    FOREIGN KEY(erstellt_von) REFERENCES benutzer(id) ON DELETE SET NULL,
+                    FOREIGN KEY(standort_id) REFERENCES standorte(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS bestellpositionen (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bestellung_id INTEGER NOT NULL,
+                    material_id INTEGER,
+                    beschreibung TEXT,
+                    menge INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(bestellung_id) REFERENCES bestellungen(id) ON DELETE CASCADE,
+                    FOREIGN KEY(material_id) REFERENCES verbrauchsmaterial(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS system_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    zeitstempel TEXT NOT NULL,
+                    ebene TEXT NOT NULL,
+                    nachricht TEXT NOT NULL,
+                    benutzer_id INTEGER,
+                    FOREIGN KEY(benutzer_id) REFERENCES benutzer(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS system_audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tabelle TEXT NOT NULL,
+                    datensatz_id INTEGER,
+                    aktion TEXT NOT NULL,
+                    vorher TEXT,
+                    nachher TEXT,
+                    zeitstempel TEXT NOT NULL,
+                    benutzer_id INTEGER,
+                    FOREIGN KEY(benutzer_id) REFERENCES benutzer(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS ics_importe (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    quelle TEXT NOT NULL,
+                    importiert_am TEXT NOT NULL,
+                    zusammenfassung TEXT,
+                    start TEXT,
+                    ende TEXT,
+                    produkt_id INTEGER,
+                    FOREIGN KEY(produkt_id) REFERENCES produkte(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS archivierte_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    log_typ TEXT NOT NULL,
+                    inhalt BLOB NOT NULL,
+                    erstellt_am TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS material_bezeichnungen (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL UNIQUE
@@ -420,8 +484,12 @@ class DatabaseManager:
         self._ensure_column("benutzer", "vorname", "TEXT")
         self._ensure_column("benutzer", "nachname", "TEXT")
         self._ensure_column("benutzer", "dienstnummer", "TEXT")
+        self._ensure_column("benutzer", "email", "TEXT")
         for column in PERMISSION_COLUMNS:
             self._ensure_column("benutzer", column, "INTEGER NOT NULL DEFAULT 1")
+
+        self._ensure_column("system_log", "benutzer_id", "INTEGER REFERENCES benutzer(id)")
+        self._ensure_column("system_audit", "benutzer_id", "INTEGER REFERENCES benutzer(id)")
 
         self._ensure_column("kontakte", "unternehmen", "TEXT")
         self._ensure_column("kontakte", "website", "TEXT")
@@ -607,10 +675,20 @@ class DatabaseManager:
             permission_values = [1 if PERMISSION_DEFAULTS[column] else 0 for column in PERMISSION_COLUMNS]
             self.connection.execute(
                 f"""
-                INSERT INTO benutzer (username, password_hash, full_name, role, vorname, nachname, dienstnummer, {columns_sql})
-                VALUES (?, ?, ?, ?, ?, ?, ?, {placeholders})
+                INSERT INTO benutzer (username, password_hash, full_name, role, vorname, nachname, dienstnummer, email, {columns_sql})
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, {placeholders})
                 """,
-                ("admin", password_hash, "Administrator", "admin", "Admin", "Account", "0000", *permission_values),
+                (
+                    "admin",
+                    password_hash,
+                    "Administrator",
+                    "admin",
+                    "Admin",
+                    "Account",
+                    "0000",
+                    "admin@example.com",
+                    *permission_values,
+                ),
             )
 
     # ------------------------------------------------------------------
@@ -640,7 +718,7 @@ class DatabaseManager:
         if identifier:
             row = self.connection.execute(
                 f"""
-                SELECT id, username, full_name, role, password_hash, {columns_sql}
+                SELECT id, username, full_name, role, email, password_hash, {columns_sql}
                 FROM benutzer
                 WHERE dienstnummer = ? COLLATE NOCASE
                 """,
@@ -648,7 +726,7 @@ class DatabaseManager:
             ).fetchone()
         if not row:
             row = self.connection.execute(
-                f"SELECT id, username, full_name, role, password_hash, {columns_sql} FROM benutzer WHERE username = ?",
+                f"SELECT id, username, full_name, role, email, password_hash, {columns_sql} FROM benutzer WHERE username = ?",
                 (username,),
             ).fetchone()
         if not row:
@@ -671,6 +749,7 @@ class DatabaseManager:
             username=row["username"],
             full_name=row["full_name"],
             role=row["role"],
+            email=row["email"] or "",
             **permission_kwargs,
             location_permissions=location_permissions,
         )
@@ -1337,7 +1416,7 @@ class DatabaseManager:
     def get_product(self, produkt_id: int) -> Optional[sqlite3.Row]:
         return self.connection.execute(
             """
-            SELECT p.*,
+            SELECT p.*, 
                    k.name AS kategorie_name,
                    s.land AS standort_land,
                    s.bereich AS standort_bereich,
@@ -1360,6 +1439,15 @@ class DatabaseManager:
             """,
             (produkt_id,),
         ).fetchone()
+
+    def serial_exists(self, seriennummer: str, *, exclude_id: Optional[int] = None) -> bool:
+        query = "SELECT id FROM produkte WHERE seriennummer = ?"
+        params: Tuple[Any, ...] = (seriennummer,)
+        if exclude_id is not None:
+            query += " AND id <> ?"
+            params = (seriennummer, exclude_id)
+        row = self.connection.execute(query, params).fetchone()
+        return bool(row)
 
     def add_or_update_product(
         self,
@@ -2079,6 +2167,31 @@ class DatabaseManager:
             )
         )
 
+    def get_user(self, benutzer_id: int) -> Optional[sqlite3.Row]:
+        return self.connection.execute(
+            "SELECT * FROM benutzer WHERE id = ?",
+            (benutzer_id,),
+        ).fetchone()
+
+    def update_user_profile(
+        self,
+        *,
+        benutzer_id: int,
+        vorname: str,
+        nachname: str,
+        email: str,
+    ) -> None:
+        full_name = f"{vorname.strip()} {nachname.strip()}".strip() or email or "Benutzer"
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE benutzer
+                SET vorname = ?, nachname = ?, email = ?, full_name = ?
+                WHERE id = ?
+                """,
+                (vorname, nachname, email, full_name, benutzer_id),
+            )
+
     def list_user_location_permissions(self, benutzer_id: int) -> List[Dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -2135,6 +2248,7 @@ class DatabaseManager:
         nachname: str,
         dienstnummer: str,
         rolle: str,
+        email: str = "",
         permissions: Optional[Dict[str, bool]] = None,
         location_permissions: Optional[Dict[int, Dict[str, bool]]] = None,
     ) -> int:
@@ -2154,7 +2268,7 @@ class DatabaseManager:
                 self.connection.execute(
                     f"""
                     UPDATE benutzer
-                    SET username = ?, full_name = ?, role = ?, vorname = ?, nachname = ?, dienstnummer = ?, {set_clause}
+                    SET username = ?, full_name = ?, role = ?, vorname = ?, nachname = ?, dienstnummer = ?, email = ?, {set_clause}
                     WHERE id = ?
                     """,
                     (
@@ -2164,6 +2278,7 @@ class DatabaseManager:
                         vorname,
                         nachname,
                         dienstnummer,
+                        email,
                         *permission_values,
                         benutzer_id,
                     ),
@@ -2174,8 +2289,8 @@ class DatabaseManager:
                 placeholders = ", ".join(["?"] * len(PERMISSION_COLUMNS))
                 cur = self.connection.execute(
                     f"""
-                    INSERT INTO benutzer (username, password_hash, full_name, role, vorname, nachname, dienstnummer, {columns_sql})
-                    VALUES (?, ?, ?, ?, ?, ?, ?, {placeholders})
+                    INSERT INTO benutzer (username, password_hash, full_name, role, vorname, nachname, dienstnummer, email, {columns_sql})
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, {placeholders})
                     """,
                     (
                         username,
@@ -2185,6 +2300,7 @@ class DatabaseManager:
                         vorname,
                         nachname,
                         dienstnummer,
+                        email,
                         *permission_values,
                     ),
                 )
@@ -2691,6 +2807,278 @@ class DatabaseManager:
         target = backup_dir / f"{self.db_path.stem}-{timestamp}{self.db_path.suffix}"
         shutil.copy2(self.db_path, target)
         return target
+
+    def restore_backup(self, source: Path) -> None:
+        """Restore the database from the given backup file."""
+
+        if not source.exists():
+            raise FileNotFoundError(source)
+        self.connection.close()
+        shutil.copy2(source, self.db_path)
+        self.connection = sqlite3.connect(self.db_path)
+        self.connection.row_factory = sqlite3.Row
+        self.initialize_schema()
+
+    def log_event(
+        self,
+        *,
+        ebene: str,
+        nachricht: str,
+        benutzer_id: Optional[int] = None,
+    ) -> None:
+        """Persist an entry in the central log table."""
+
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO system_log (zeitstempel, ebene, nachricht, benutzer_id)
+                VALUES (?, ?, ?, ?)
+                """,
+                (datetime.utcnow().isoformat(timespec="seconds"), ebene, nachricht, benutzer_id),
+            )
+
+    def list_system_log(self, limit: int = 500) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                """
+                SELECT sl.*, b.full_name AS benutzer_name
+                FROM system_log AS sl
+                LEFT JOIN benutzer AS b ON b.id = sl.benutzer_id
+                ORDER BY sl.id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+        )
+
+    def record_audit(
+        self,
+        *,
+        tabelle: str,
+        datensatz_id: Optional[int],
+        aktion: str,
+        vorher: Optional[str],
+        nachher: Optional[str],
+        benutzer_id: Optional[int],
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO system_audit (tabelle, datensatz_id, aktion, vorher, nachher, zeitstempel, benutzer_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tabelle,
+                    datensatz_id,
+                    aktion,
+                    vorher,
+                    nachher,
+                    datetime.utcnow().isoformat(timespec="seconds"),
+                    benutzer_id,
+                ),
+            )
+
+    def list_audit_entries(
+        self,
+        *,
+        limit: int = 200,
+        benutzer_id: Optional[int] = None,
+    ) -> List[sqlite3.Row]:
+        query = (
+            "SELECT sa.*, b.full_name AS benutzer_name FROM system_audit AS sa "
+            "LEFT JOIN benutzer AS b ON b.id = sa.benutzer_id"
+        )
+        params: Tuple[Any, ...] = ()
+        if benutzer_id:
+            query += " WHERE sa.benutzer_id = ?"
+            params = (benutzer_id,)
+        query += " ORDER BY sa.id DESC LIMIT ?"
+        params = params + (limit,)
+        return list(self.connection.execute(query, params))
+
+    def import_ics_events(self, path: Path) -> int:
+        """Parse a basic ICS file and persist the contained events."""
+
+        count = 0
+        current: Dict[str, str] = {}
+        with path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if line == "BEGIN:VEVENT":
+                    current = {}
+                    continue
+                if line == "END:VEVENT":
+                    if current:
+                        self._store_ics_event(current)
+                        count += 1
+                    current = {}
+                    continue
+                if ":" in line:
+                    key, value = line.split(":", 1)
+                    current[key.upper()] = value
+        return count
+
+    def _store_ics_event(self, values: Dict[str, str]) -> None:
+        summary = values.get("SUMMARY", "")
+        dtstart = values.get("DTSTART", "")
+        dtend = values.get("DTEND", "")
+        produkt_id = None
+        if "PRODID" in values:
+            try:
+                produkt_id = int(values["PRODID"].split("-")[-1])
+            except ValueError:
+                produkt_id = None
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO ics_importe (quelle, importiert_am, zusammenfassung, start, ende, produkt_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    values.get("UID", "unbekannt"),
+                    datetime.utcnow().isoformat(timespec="seconds"),
+                    summary,
+                    dtstart,
+                    dtend,
+                    produkt_id,
+                ),
+            )
+
+    def archive_logs(self, older_than_years: int = 2) -> Optional[Path]:
+        cutoff = datetime.utcnow().replace(year=datetime.utcnow().year - older_than_years)
+        rows = self.connection.execute(
+            "SELECT * FROM system_log WHERE zeitstempel < ?",
+            (cutoff.isoformat(timespec="seconds"),),
+        ).fetchall()
+        if not rows:
+            return None
+        archive_dir = self.db_path.parent / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = archive_dir / f"system_log_{cutoff.year}.txt"
+        with archive_path.open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(
+                    f"{row['zeitstempel']} [{row['ebene']}] {row['nachricht']}"
+                    + (f" (User {row['benutzer_id']})" if row["benutzer_id"] else "")
+                    + "\n"
+                )
+        blob = archive_path.read_bytes()
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO archivierte_logs (log_typ, inhalt, erstellt_am)
+                VALUES (?, ?, ?)
+                """,
+                ("system_log", sqlite3.Binary(blob), datetime.utcnow().isoformat(timespec="seconds")),
+            )
+            self.connection.execute(
+                "DELETE FROM system_log WHERE zeitstempel < ?",
+                (cutoff.isoformat(timespec="seconds"),),
+            )
+        return archive_path
+
+    def create_order(
+        self,
+        *,
+        erstellt_von: int,
+        standort_id: Optional[int],
+        bemerkung: str,
+        positionen: List[Tuple[str, int]],
+    ) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                """
+                INSERT INTO bestellungen (erstellt_am, erstellt_von, status, standort_id, bemerkung)
+                VALUES (?, ?, 'offen', ?, ?)
+                """,
+                (
+                    datetime.utcnow().isoformat(timespec="seconds"),
+                    erstellt_von,
+                    standort_id,
+                    bemerkung,
+                ),
+            )
+            bestellung_id = int(cur.lastrowid)
+            for beschreibung, menge in positionen:
+                self.connection.execute(
+                    """
+                    INSERT INTO bestellpositionen (bestellung_id, beschreibung, menge)
+                    VALUES (?, ?, ?)
+                    """,
+                    (bestellung_id, beschreibung, menge),
+                )
+        return bestellung_id
+
+    def update_order_status(
+        self,
+        bestellung_id: int,
+        *,
+        status: str,
+        benutzer_id: Optional[int],
+    ) -> None:
+        timestamps = {
+            "genehmigt": "genehmigt_am",
+            "abgeschlossen": "abgeschlossen_am",
+        }
+        column = timestamps.get(status)
+        values: List[Any] = [status]
+        set_clause = "status = ?"
+        if column:
+            set_clause += f", {column} = ?"
+            values.append(datetime.utcnow().isoformat(timespec="seconds"))
+        values.extend([bestellung_id])
+        with self.connection:
+            self.connection.execute(
+                f"UPDATE bestellungen SET {set_clause} WHERE id = ?",
+                values,
+            )
+        self.record_audit(
+            tabelle="bestellungen",
+            datensatz_id=bestellung_id,
+            aktion=f"status:{status}",
+            vorher=None,
+            nachher=None,
+            benutzer_id=benutzer_id,
+        )
+
+    def list_orders(self, status: Optional[str] = None) -> List[sqlite3.Row]:
+        query = (
+            "SELECT b.*, s.land, s.bereich, s.bezirk, s.bezirksstelle, s.ortsstelle, u.full_name AS benutzer_name "
+            "FROM bestellungen AS b "
+            "LEFT JOIN standorte AS s ON s.id = b.standort_id "
+            "LEFT JOIN benutzer AS u ON u.id = b.erstellt_von"
+        )
+        params: Tuple[Any, ...] = ()
+        if status:
+            query += " WHERE b.status = ?"
+            params = (status,)
+        query += " ORDER BY b.erstellt_am DESC"
+        return list(self.connection.execute(query, params))
+
+    def search_global(self, term: str) -> Dict[str, List[sqlite3.Row]]:
+        like = f"%{term}%"
+        results: Dict[str, List[sqlite3.Row]] = {}
+        queries = {
+            "produkte": (
+                "SELECT id, name, seriennummer FROM produkte WHERE name LIKE ? OR seriennummer LIKE ?",
+                (like, like),
+            ),
+            "fahrzeuge": (
+                "SELECT id, name, kennzeichen FROM fahrzeuge WHERE name LIKE ? OR kennzeichen LIKE ?",
+                (like, like),
+            ),
+            "material": (
+                "SELECT id, name, lagerort FROM verbrauchsmaterial WHERE name LIKE ?",
+                (like,),
+            ),
+            "kontakte": (
+                "SELECT id, name, email FROM kontakte WHERE name LIKE ? OR email LIKE ?",
+                (like, like),
+            ),
+        }
+        for key, (query, params) in queries.items():
+            results[key] = list(self.connection.execute(query, params))
+        return results
 
     def close(self) -> None:
         with contextlib.suppress(Exception):

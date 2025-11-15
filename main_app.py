@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import calendar
 import calendar
+import json
+import textwrap
+import webbrowser
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -26,7 +29,7 @@ from app.database import (
 )
 
 import tkinter as tk
-from tkinter import filedialog, font as tkfont
+from tkinter import filedialog, font as tkfont, scrolledtext
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
@@ -2239,7 +2242,7 @@ class UsersFrame(ttkb.Frame):
         self.wait_window(dialog)
         if not dialog.result:
             return
-        vorname, nachname, dienstnummer, rolle = dialog.result
+        vorname, nachname, dienstnummer, rolle, email = dialog.result
         try:
             self.db.add_or_update_user(
                 benutzer_id=None,
@@ -2247,6 +2250,7 @@ class UsersFrame(ttkb.Frame):
                 nachname=nachname,
                 dienstnummer=dienstnummer,
                 rolle=rolle,
+                email=email,
                 permissions=dialog.permissions,
                 location_permissions=dialog.location_permissions,
             )
@@ -2267,6 +2271,7 @@ class UsersFrame(ttkb.Frame):
             vorname=row["vorname"] or "",
             nachname=row["nachname"] or "",
             dienstnummer=row["dienstnummer"] or "",
+            email=row["email"] or "",
             rolle=row["role"],
             permissions={column: bool(row[column]) for column in PERMISSION_COLUMNS},
             assigned_locations=assigned_locations,
@@ -2274,7 +2279,7 @@ class UsersFrame(ttkb.Frame):
         self.wait_window(dialog)
         if not dialog.result:
             return
-        vorname, nachname, dienstnummer, rolle = dialog.result
+        vorname, nachname, dienstnummer, rolle, email = dialog.result
         try:
             self.db.add_or_update_user(
                 benutzer_id=row["id"],
@@ -2282,6 +2287,7 @@ class UsersFrame(ttkb.Frame):
                 nachname=nachname,
                 dienstnummer=dienstnummer,
                 rolle=rolle,
+                email=email,
                 permissions=dialog.permissions,
                 location_permissions=dialog.location_permissions,
             )
@@ -2530,6 +2536,7 @@ class UserDialog(ttkb.Toplevel):
         vorname: str = "",
         nachname: str = "",
         dienstnummer: str = "",
+        email: str = "",
         rolle: str = "benutzer",
         permissions: Optional[Dict[str, bool]] = None,
         assigned_locations: Optional[List[Dict[str, Any]]] = None,
@@ -2537,7 +2544,7 @@ class UserDialog(ttkb.Toplevel):
         super().__init__(master)
         self.title("Benutzer")
         self.resizable(False, False)
-        self.result: Optional[Tuple[str, str, str, str]] = None
+        self.result: Optional[Tuple[str, str, str, str, str]] = None
         self.permissions: Dict[str, bool] = {}
         self.db = db
         self.locations = db.list_locations()
@@ -2570,7 +2577,11 @@ class UserDialog(ttkb.Toplevel):
         self.dienstnummer_var = ttkb.StringVar(value=dienstnummer)
         ttkb.Entry(container, textvariable=self.dienstnummer_var, width=30).grid(row=2, column=1, sticky=W)
 
-        ttkb.Label(container, text="Rolle").grid(row=3, column=0, sticky=W, pady=5)
+        ttkb.Label(container, text="E-Mail").grid(row=3, column=0, sticky=W, pady=5)
+        self.email_var = ttkb.StringVar(value=email)
+        ttkb.Entry(container, textvariable=self.email_var, width=30).grid(row=3, column=1, sticky=W)
+
+        ttkb.Label(container, text="Rolle").grid(row=4, column=0, sticky=W, pady=5)
         self.rolle_var = ttkb.StringVar(value=rolle)
         ttkb.Combobox(
             container,
@@ -2578,7 +2589,7 @@ class UserDialog(ttkb.Toplevel):
             values=["admin", "benutzer"],
             state="readonly",
             width=28,
-        ).grid(row=3, column=1, sticky=W)
+        ).grid(row=4, column=1, sticky=W)
 
         permission_values = PERMISSION_DEFAULTS.copy()
         if permissions:
@@ -2588,7 +2599,7 @@ class UserDialog(ttkb.Toplevel):
 
         self.permission_vars: Dict[str, Tuple[ttkb.BooleanVar, ttkb.BooleanVar]] = {}
         permissions_frame = ttkb.Labelframe(container, text="Modul-Berechtigungen")
-        permissions_frame.grid(row=4, column=0, columnspan=2, sticky=W + tk.E, pady=(15, 0))
+        permissions_frame.grid(row=5, column=0, columnspan=2, sticky=W + tk.E, pady=(15, 0))
 
         for index, (module, label) in enumerate(PERMISSION_MODULES):
             read_var = ttkb.BooleanVar(value=permission_values[f"{module}_lesen"])
@@ -2612,7 +2623,7 @@ class UserDialog(ttkb.Toplevel):
             )
 
         location_frame = ttkb.Labelframe(container, text="Standort-Berechtigungen")
-        location_frame.grid(row=5, column=0, columnspan=2, sticky=W + tk.E, pady=(15, 0))
+        location_frame.grid(row=6, column=0, columnspan=2, sticky=W + tk.E, pady=(15, 0))
 
         self.location_tree = ttkb.Treeview(
             location_frame,
@@ -2650,7 +2661,7 @@ class UserDialog(ttkb.Toplevel):
         ).pack(side=LEFT, padx=2)
 
         button_frame = ttkb.Frame(container)
-        button_frame.grid(row=6, column=0, columnspan=2, pady=(20, 0))
+        button_frame.grid(row=7, column=0, columnspan=2, pady=(20, 0))
         ttkb.Button(button_frame, text="Speichern", command=self.on_save, bootstyle="success").pack(side=LEFT, padx=5)
         ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(side=LEFT, padx=5)
 
@@ -2749,12 +2760,13 @@ class UserDialog(ttkb.Toplevel):
             Messagebox.show_warning("Bitte alle Felder ausfüllen", "Hinweis")
             return
         rolle = self.rolle_var.get() or "benutzer"
+        email = self.email_var.get().strip()
         permission_map: Dict[str, bool] = {}
         for module, (read_var, write_var) in self.permission_vars.items():
             permission_map[f"{module}_lesen"] = bool(read_var.get())
             permission_map[f"{module}_schreiben"] = bool(write_var.get())
         self.permissions = permission_map
-        self.result = (vorname, nachname, dienstnummer, rolle)
+        self.result = (vorname, nachname, dienstnummer, rolle, email)
         self.destroy()
 
     @staticmethod
@@ -2895,6 +2907,459 @@ class RetireProductDialog(ttkb.Toplevel):
         self.result = (self.date_var.get(), grund)
         self.destroy()
 
+
+class PasswordChangeDialog(ttkb.Toplevel):
+    def __init__(self, master: tk.Misc) -> None:
+        super().__init__(master)
+        self.title("Passwort ändern")
+        self.resizable(False, False)
+        self.result: Optional[Tuple[str, str]] = None
+
+        container = ttkb.Frame(self, padding=20)
+        container.pack(fill=BOTH, expand=True)
+
+        ttkb.Label(container, text="Aktuelles Passwort").grid(row=0, column=0, sticky=W, pady=5)
+        self.old_var = ttkb.StringVar()
+        ttkb.Entry(container, textvariable=self.old_var, show="*", width=30).grid(row=0, column=1, sticky=W)
+
+        ttkb.Label(container, text="Neues Passwort").grid(row=1, column=0, sticky=W, pady=5)
+        self.new_var = ttkb.StringVar()
+        ttkb.Entry(container, textvariable=self.new_var, show="*", width=30).grid(row=1, column=1, sticky=W)
+
+        ttkb.Label(container, text="Bestätigung").grid(row=2, column=0, sticky=W, pady=5)
+        self.confirm_var = ttkb.StringVar()
+        ttkb.Entry(container, textvariable=self.confirm_var, show="*", width=30).grid(row=2, column=1, sticky=W)
+
+        button_frame = ttkb.Frame(container)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=(15, 0))
+        ttkb.Button(button_frame, text="Speichern", command=self.on_save, bootstyle="success").pack(side=LEFT, padx=5)
+        ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(side=LEFT, padx=5)
+
+        self.grab_set()
+
+    def on_save(self) -> None:
+        old = self.old_var.get()
+        new = self.new_var.get()
+        confirm = self.confirm_var.get()
+        if not old or not new:
+            Messagebox.show_warning("Bitte alle Felder ausfüllen", "Hinweis")
+            return
+        if new != confirm:
+            Messagebox.show_warning("Neue Passwörter stimmen nicht überein", "Hinweis")
+            return
+        self.result = (old, new)
+        self.destroy()
+
+
+class AccountDialog(ttkb.Toplevel):
+    def __init__(
+        self,
+        master: tk.Misc,
+        db: DatabaseManager,
+        *,
+        user_id: int,
+        vorname: str,
+        nachname: str,
+        email: str,
+        language: str,
+        theme: str,
+    ) -> None:
+        super().__init__(master)
+        self.title("Mein Konto")
+        self.resizable(False, False)
+        self.result: Optional[Tuple[str, str, str, str, str]] = None
+        self.db = db
+        self.user_id = user_id
+
+        container = ttkb.Frame(self, padding=20)
+        container.pack(fill=BOTH, expand=True)
+
+        ttkb.Label(container, text="Vorname").grid(row=0, column=0, sticky=W, pady=5)
+        self.vorname_var = ttkb.StringVar(value=vorname)
+        ttkb.Entry(container, textvariable=self.vorname_var, width=30).grid(row=0, column=1, sticky=W)
+
+        ttkb.Label(container, text="Nachname").grid(row=1, column=0, sticky=W, pady=5)
+        self.nachname_var = ttkb.StringVar(value=nachname)
+        ttkb.Entry(container, textvariable=self.nachname_var, width=30).grid(row=1, column=1, sticky=W)
+
+        ttkb.Label(container, text="E-Mail").grid(row=2, column=0, sticky=W, pady=5)
+        self.email_var = ttkb.StringVar(value=email)
+        ttkb.Entry(container, textvariable=self.email_var, width=30).grid(row=2, column=1, sticky=W)
+
+        ttkb.Label(container, text="Sprache").grid(row=3, column=0, sticky=W, pady=5)
+        self.language_var = ttkb.StringVar(value=language)
+        ttkb.Combobox(
+            container,
+            textvariable=self.language_var,
+            values=["de", "en"],
+            width=28,
+            state="readonly",
+        ).grid(row=3, column=1, sticky=W)
+
+        ttkb.Label(container, text="Theme").grid(row=4, column=0, sticky=W, pady=5)
+        self.theme_var = ttkb.StringVar(value=theme)
+        ttkb.Combobox(
+            container,
+            textvariable=self.theme_var,
+            values=sorted(master.style.theme_names()),
+            width=28,
+            state="readonly",
+        ).grid(row=4, column=1, sticky=W)
+
+        button_frame = ttkb.Frame(container)
+        button_frame.grid(row=5, column=0, columnspan=2, pady=(15, 0))
+        ttkb.Button(button_frame, text="Speichern", command=self.on_save, bootstyle="success").pack(side=LEFT, padx=5)
+        ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(side=LEFT, padx=5)
+
+        self.grab_set()
+
+    def on_save(self) -> None:
+        vorname = self.vorname_var.get().strip()
+        nachname = self.nachname_var.get().strip()
+        if not vorname or not nachname:
+            Messagebox.show_warning("Vor- und Nachname sind erforderlich", "Hinweis")
+            return
+        email = self.email_var.get().strip()
+        language = self.language_var.get() or "de"
+        theme = self.theme_var.get() or "flatly"
+        self.result = (vorname, nachname, email, language, theme)
+        self.destroy()
+
+
+class GlobalSearchDialog(ttkb.Toplevel):
+    def __init__(
+        self,
+        master: tk.Misc,
+        db: DatabaseManager,
+        user: Optional[User],
+    ) -> None:
+        super().__init__(master)
+        self.title("Globale Suche")
+        self.resizable(True, True)
+        self.geometry("620x420")
+        self.db = db
+        self.user = user
+
+        container = ttkb.Frame(self, padding=15)
+        container.pack(fill=BOTH, expand=True)
+
+        self.query_var = ttkb.StringVar()
+        search_row = ttkb.Frame(container)
+        search_row.pack(fill=tk.X, pady=(0, 10))
+        ttkb.Entry(search_row, textvariable=self.query_var).pack(side=LEFT, fill=tk.X, expand=True)
+        ttkb.Button(search_row, text="Suchen", command=self.perform_search, bootstyle="primary").pack(side=LEFT, padx=(10, 0))
+
+        columns = [
+            {"text": "Bereich"},
+            {"text": "Bezeichnung"},
+            {"text": "Details"},
+        ]
+        self.table = Tableview(
+            container,
+            coldata=columns,
+            rowdata=[],
+            pagesize=15,
+        )
+        self.table.pack(fill=BOTH, expand=True)
+
+        self.bind("<Return>", lambda _event: self.perform_search())
+        self.grab_set()
+
+    def perform_search(self) -> None:
+        term = self.query_var.get().strip()
+        self.table.delete_rows()
+        if not term:
+            return
+        results = self.db.search_global(term)
+        for section, rows in results.items():
+            for row in rows:
+                details = []
+                if "seriennummer" in row.keys():
+                    details.append(f"SN: {row['seriennummer']}")
+                if "kennzeichen" in row.keys() and row["kennzeichen"]:
+                    details.append(f"Kennzeichen: {row['kennzeichen']}")
+                if "lagerort" in row.keys() and row["lagerort"]:
+                    details.append(f"Ort: {row['lagerort']}")
+                if "email" in row.keys() and row["email"]:
+                    details.append(f"E-Mail: {row['email']}")
+                self.table.insert_row(
+                    values=(
+                        section.capitalize(),
+                        row.get("name") or row.get("full_name") or row.get("kennzeichen") or "",
+                        ", ".join(details),
+                    )
+                )
+
+
+class LogViewerDialog(ttkb.Toplevel):
+    def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
+        super().__init__(master)
+        self.title("System-Log")
+        self.resizable(True, True)
+        self.geometry("680x420")
+        self.db = db
+
+        container = ttkb.Frame(self, padding=15)
+        container.pack(fill=BOTH, expand=True)
+
+        columns = [
+            {"text": "Zeit"},
+            {"text": "Ebene"},
+            {"text": "Nachricht"},
+            {"text": "Benutzer"},
+        ]
+        self.table = Tableview(container, coldata=columns, rowdata=[], pagesize=20)
+        self.table.pack(fill=BOTH, expand=True)
+
+        self.refresh()
+        self.grab_set()
+
+    def refresh(self) -> None:
+        self.table.delete_rows()
+        for row in self.db.list_system_log():
+            self.table.insert_row(
+                values=(
+                    row["zeitstempel"],
+                    row["ebene"],
+                    row["nachricht"],
+                    row["benutzer_name"] or "",
+                )
+            )
+
+
+class ConfigurationDialog(ttkb.Toplevel):
+    def __init__(self, master: tk.Misc, *, backup_dir: str, reminder_days: int) -> None:
+        super().__init__(master)
+        self.title("Konfiguration")
+        self.resizable(False, False)
+        self.result: Optional[Tuple[str, int]] = None
+
+        container = ttkb.Frame(self, padding=20)
+        container.pack(fill=BOTH, expand=True)
+
+        ttkb.Label(container, text="Backup-Verzeichnis").grid(row=0, column=0, sticky=W, pady=5)
+        self.backup_var = ttkb.StringVar(value=backup_dir)
+        entry = ttkb.Entry(container, textvariable=self.backup_var, width=32)
+        entry.grid(row=0, column=1, sticky=W)
+        ttkb.Button(container, text="Auswählen", command=self.choose_directory).grid(row=0, column=2, padx=(8, 0))
+
+        ttkb.Label(container, text="Erinnerungstage").grid(row=1, column=0, sticky=W, pady=5)
+        self.reminder_var = ttkb.IntVar(value=reminder_days)
+        ttkb.Spinbox(container, textvariable=self.reminder_var, from_=1, to=60, width=5).grid(row=1, column=1, sticky=W)
+
+        button_frame = ttkb.Frame(container)
+        button_frame.grid(row=2, column=0, columnspan=3, pady=(15, 0))
+        ttkb.Button(button_frame, text="Speichern", command=self.on_save, bootstyle="success").pack(side=LEFT, padx=5)
+        ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(side=LEFT, padx=5)
+
+        self.grab_set()
+
+    def choose_directory(self) -> None:
+        path = filedialog.askdirectory(title="Backup-Verzeichnis")
+        if path:
+            self.backup_var.set(path)
+
+    def on_save(self) -> None:
+        backup_dir = self.backup_var.get().strip()
+        reminder_days = int(self.reminder_var.get())
+        if reminder_days <= 0:
+            Messagebox.show_warning("Erinnerungstage müssen größer 0 sein", "Hinweis")
+            return
+        self.result = (backup_dir, reminder_days)
+        self.destroy()
+
+
+class OrderCenterDialog(ttkb.Toplevel):
+    def __init__(self, master: tk.Misc, db: DatabaseManager, user: Optional[User]) -> None:
+        super().__init__(master)
+        self.title("Bestellwesen")
+        self.resizable(True, True)
+        self.geometry("760x480")
+        self.db = db
+        self.user = user
+
+        container = ttkb.Frame(self, padding=15)
+        container.pack(fill=BOTH, expand=True)
+
+        toolbar = ttkb.Frame(container)
+        toolbar.pack(fill=tk.X, pady=(0, 10))
+        ttkb.Button(toolbar, text="Neue Bestellung", command=self.new_order, bootstyle="success").pack(side=LEFT)
+        ttkb.Button(toolbar, text="Genehmigen", command=lambda: self.change_status("genehmigt"), bootstyle="info").pack(side=LEFT, padx=5)
+        ttkb.Button(toolbar, text="Abschließen", command=lambda: self.change_status("abgeschlossen"), bootstyle="secondary").pack(side=LEFT, padx=5)
+
+        columns = [
+            {"text": "ID"},
+            {"text": "Status"},
+            {"text": "Erstellt"},
+            {"text": "Standort"},
+            {"text": "Benutzer"},
+        ]
+        self.table = Tableview(container, coldata=columns, rowdata=[], pagesize=18)
+        self.table.pack(fill=BOTH, expand=True)
+
+        self.refresh()
+        self.grab_set()
+
+    def refresh(self) -> None:
+        self.table.delete_rows()
+        for row in self.db.list_orders():
+            location = " / ".join(
+                filter(
+                    None,
+                    [row["land"], row["bereich"], row["bezirk"], row["bezirksstelle"], row["ortsstelle"]],
+                )
+            )
+            self.table.insert_row(
+                values=(
+                    row["id"],
+                    row["status"],
+                    row["erstellt_am"],
+                    location,
+                    row["benutzer_name"] or "",
+                )
+            )
+
+    def selected_order(self) -> Optional[int]:
+        rows = self.table.get_rows("selected")
+        if not rows:
+            Messagebox.show_info("Bitte Bestellung wählen", "Hinweis")
+            return None
+        return int(rows[0].values[0])
+
+    def change_status(self, status: str) -> None:
+        order_id = self.selected_order()
+        if order_id is None:
+            return
+        try:
+            self.db.update_order_status(order_id, status=status, benutzer_id=self.user.id if self.user else None)
+        except Exception as exc:  # pragma: no cover - UI feedback
+            Messagebox.show_error(str(exc), "Statusänderung fehlgeschlagen")
+            return
+        self.refresh()
+
+    def new_order(self) -> None:
+        dialog = NewOrderDialog(self, self.db)
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        standort_id, bemerkung, positionen = dialog.result
+        try:
+            self.db.create_order(
+                erstellt_von=self.user.id if self.user else 0,
+                standort_id=standort_id,
+                bemerkung=bemerkung,
+                positionen=positionen,
+            )
+        except Exception as exc:  # pragma: no cover - UI feedback
+            Messagebox.show_error(str(exc), "Bestellung konnte nicht angelegt werden")
+            return
+        self.refresh()
+
+
+class NewOrderDialog(ttkb.Toplevel):
+    def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
+        super().__init__(master)
+        self.title("Bestellung anlegen")
+        self.resizable(False, False)
+        self.result: Optional[Tuple[Optional[int], str, List[Tuple[str, int]]]] = None
+        self.db = db
+
+        container = ttkb.Frame(self, padding=20)
+        container.pack(fill=BOTH, expand=True)
+
+        ttkb.Label(container, text="Standort").grid(row=0, column=0, sticky=W, pady=5)
+        locations = db.list_locations()
+        self.location_map = {db.location_label(row["id"]): row["id"] for row in locations}
+        self.location_var = ttkb.StringVar()
+        ttkb.Combobox(
+            container,
+            textvariable=self.location_var,
+            values=list(self.location_map.keys()),
+            width=40,
+        ).grid(row=0, column=1, sticky=W)
+
+        ttkb.Label(container, text="Bemerkung").grid(row=1, column=0, sticky=W, pady=5)
+        self.note_var = ttkb.StringVar()
+        ttkb.Entry(container, textvariable=self.note_var, width=42).grid(row=1, column=1, sticky=W)
+
+        ttkb.Label(container, text="Positionen (eine pro Zeile, Format: Menge x Beschreibung)").grid(row=2, column=0, columnspan=2, sticky=W, pady=5)
+        self.positions = scrolledtext.ScrolledText(container, width=60, height=6)
+        self.positions.grid(row=3, column=0, columnspan=2, pady=(0, 10))
+
+        button_frame = ttkb.Frame(container)
+        button_frame.grid(row=4, column=0, columnspan=2)
+        ttkb.Button(button_frame, text="Speichern", command=self.on_save, bootstyle="success").pack(side=LEFT, padx=5)
+        ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(side=LEFT, padx=5)
+
+        self.grab_set()
+
+    def on_save(self) -> None:
+        selected = self.location_var.get()
+        standort_id = self.location_map.get(selected)
+        bemerkung = self.note_var.get().strip()
+        raw_lines = [line.strip() for line in self.positions.get("1.0", tk.END).splitlines() if line.strip()]
+        if not raw_lines:
+            Messagebox.show_warning("Bitte mindestens eine Position erfassen", "Hinweis")
+            return
+        parsed: List[Tuple[str, int]] = []
+        for line in raw_lines:
+            if " " in line:
+                amount_part, description = line.split(" ", 1)
+            elif "x" in line:
+                amount_part, description = line.split("x", 1)
+            else:
+                amount_part, description = "1", line
+            try:
+                amount = int(amount_part.replace("x", "").strip())
+            except ValueError:
+                amount = 1
+            parsed.append((description.strip(), amount))
+        self.result = (standort_id, bemerkung, parsed)
+        self.destroy()
+
+
+class HelpDialog(ttkb.Toplevel):
+    def __init__(self, master: tk.Misc) -> None:
+        super().__init__(master)
+        self.title("Hilfe")
+        self.geometry("700x500")
+        self.resizable(True, True)
+
+        container = ttkb.Frame(self, padding=15)
+        container.pack(fill=BOTH, expand=True)
+
+        intro = textwrap.dedent(
+            """
+            Willkommen in der Hilfeansicht. Links finden Sie eine Kurzfassung der wichtigsten Arbeitsabläufe.
+            Öffnen Sie die vollständige Dokumentation über den Link unten.
+            """
+        ).strip()
+
+        ttkb.Label(container, text=intro, wraplength=640, justify=tk.LEFT).pack(fill=tk.X, pady=(0, 10))
+
+        self.text = scrolledtext.ScrolledText(container, wrap=tk.WORD)
+        self.text.pack(fill=BOTH, expand=True)
+        self.text.insert(tk.END, self._load_help_content())
+        self.text.configure(state=tk.DISABLED)
+
+        ttkb.Button(container, text="Dokumentation öffnen", command=self.open_docs, bootstyle="link").pack(pady=(10, 0))
+
+        self.grab_set()
+
+    @staticmethod
+    def _load_help_content() -> str:
+        docs = [Path("docs/benutzerhandbuch.md"), Path("docs/medizinprodukte_management_system.md")]
+        for doc in docs:
+            if doc.exists():
+                return doc.read_text(encoding="utf-8")
+        return "Dokumentation nicht gefunden."
+
+    def open_docs(self) -> None:
+        docs = Path("docs/medizinprodukte_management_system.html")
+        if docs.exists():
+            webbrowser.open(docs.resolve().as_uri())
+        else:
+            Messagebox.show_info("HTML-Dokumentation nicht gefunden.", "Hinweis")
 
 class PersonalizationDialog(ttkb.Toplevel):
     def __init__(
@@ -3458,30 +3923,31 @@ class ProductEditor(ttkb.Toplevel):
         self.repairs_tab.set_product_id(self.produkt_id)
 
     def save(self) -> None:
-        if not self.seriennummer_var.get().strip():
+        seriennummer = self.seriennummer_var.get().strip()
+        if not seriennummer:
             Messagebox.show_error("Seriennummer ist erforderlich", "Fehler")
             return
 
         try:
-            anschaffungsdatum = parse_date(self.anschaffungsdatum_var.get())
+            anschaffungsdatum = (
+                parse_date(self.anschaffungsdatum_var.get())
+                if self.anschaffungsdatum_var.get().strip()
+                else None
+            )
         except ValueError:
             Messagebox.show_error("Ungültiges Anschaffungsdatum", "Fehler")
             return
 
         try:
             stk_intervall = int(self.stk_interval_var.get() or 0)
-        except ValueError:
-            Messagebox.show_error("STK-Intervall muss eine Zahl sein", "Fehler")
-            return
-        try:
             mtk_intervall = int(self.mtk_interval_var.get() or 0)
         except ValueError:
-            Messagebox.show_error("MTK-Intervall muss eine Zahl sein", "Fehler")
+            Messagebox.show_error("Kontrollintervalle müssen numerisch sein", "Fehler")
             return
 
         standort_id = self._resolve_location(self.standort_var.get())
         if not standort_id:
-            Messagebox.show_error("Bitte einen Standort auswählen", "Fehler")
+            Messagebox.show_warning("Bitte einen Standort auswählen", "Hinweis")
             return
         if self.user and not self.user.can_write_location(standort_id):
             Messagebox.show_info(
@@ -3493,35 +3959,39 @@ class ProductEditor(ttkb.Toplevel):
         fahrzeug_id = self._resolve_vehicle(self.fahrzeug_var.get())
         lagerort = self.lagerort_var.get().strip()
         if not fahrzeug_id and not lagerort:
-            Messagebox.show_error(
-                "Produkt muss einem Fahrzeug oder einem Lagerort zugeordnet sein", "Fehler"
+            Messagebox.show_warning(
+                "Ein Produkt benötigt entweder ein Fahrzeug oder einen Lagerort.",
+                "Hinweis",
             )
             return
 
         try:
-            letzte_stk = parse_date(self.stk_last_var.get()) if self.stk_last_var.get().strip() else None
-        except ValueError:
-            Messagebox.show_error("Ungültiges Datum für letzte STK", "Fehler")
-            return
-        try:
+            letzte_stk = (
+                parse_date(self.stk_last_var.get())
+                if self.stk_last_var.get().strip()
+                else None
+            )
             naechste_stk = (
-                parse_date(self.stk_next_var.get()) if self.stk_next_var.get().strip() else None
+                parse_date(self.stk_next_var.get())
+                if self.stk_next_var.get().strip()
+                else None
+            )
+            letzte_mtk = (
+                parse_date(self.mtk_last_var.get())
+                if self.mtk_last_var.get().strip()
+                else None
+            )
+            naechste_mtk = (
+                parse_date(self.mtk_next_var.get())
+                if self.mtk_next_var.get().strip()
+                else None
             )
         except ValueError:
-            Messagebox.show_error("Ungültiges Datum für nächste STK", "Fehler")
+            Messagebox.show_error("Ungültige Datumsangaben", "Fehler")
             return
 
-        try:
-            letzte_mtk = parse_date(self.mtk_last_var.get()) if self.mtk_last_var.get().strip() else None
-        except ValueError:
-            Messagebox.show_error("Ungültiges Datum für letzte MTK", "Fehler")
-            return
-        try:
-            naechste_mtk = (
-                parse_date(self.mtk_next_var.get()) if self.mtk_next_var.get().strip() else None
-            )
-        except ValueError:
-            Messagebox.show_error("Ungültiges Datum für nächste MTK", "Fehler")
+        if self.db.serial_exists(seriennummer, exclude_id=self.produkt_id):
+            Messagebox.show_error("Seriennummer ist bereits vorhanden", "Fehler")
             return
 
         if self.stk_active.get() and not naechste_stk and letzte_stk and stk_intervall > 0:
@@ -3530,6 +4000,26 @@ class ProductEditor(ttkb.Toplevel):
         if self.mtk_active.get() and not naechste_mtk and letzte_mtk and mtk_intervall > 0:
             self._calculate_next_due(self.mtk_last_var, self.mtk_interval_var, self.mtk_next_var)
             naechste_mtk = parse_date(self.mtk_next_var.get())
+
+        if anschaffungsdatum and letzte_stk and letzte_stk < anschaffungsdatum:
+            Messagebox.show_error("Letzte STK darf nicht vor Anschaffung liegen", "Fehler")
+            return
+        if anschaffungsdatum and letzte_mtk and letzte_mtk < anschaffungsdatum:
+            Messagebox.show_error("Letzte MTK darf nicht vor Anschaffung liegen", "Fehler")
+            return
+        if letzte_stk and naechste_stk and naechste_stk < letzte_stk:
+            Messagebox.show_error("Nächste STK liegt vor der letzten STK", "Fehler")
+            return
+        if letzte_mtk and naechste_mtk and naechste_mtk < letzte_mtk:
+            Messagebox.show_error("Nächste MTK liegt vor der letzten MTK", "Fehler")
+            return
+        if anschaffungsdatum:
+            if naechste_stk and naechste_stk < anschaffungsdatum:
+                Messagebox.show_error("Nächste STK darf nicht vor Anschaffung liegen", "Fehler")
+                return
+            if naechste_mtk and naechste_mtk < anschaffungsdatum:
+                Messagebox.show_error("Nächste MTK darf nicht vor Anschaffung liegen", "Fehler")
+                return
 
         kategorie_id = None
         for row in self.categories:
@@ -3574,15 +4064,15 @@ class ProductEditor(ttkb.Toplevel):
                 self._refresh_manufacturer_choices()
 
         was_new = self.produkt_id is None
-
         name_value = self._resolved_name()
+        before = self.db.get_product(self.produkt_id) if self.produkt_id else None
 
         try:
             produkt_id = self.db.add_or_update_product(
                 produkt_id=self.produkt_id,
                 name=name_value,
                 typ=self.typ_var.get(),
-                seriennummer=self.seriennummer_var.get(),
+                seriennummer=seriennummer,
                 hersteller=self.hersteller_var.get(),
                 anschaffungsdatum=anschaffungsdatum,
                 kategorie_id=kategorie_id,
@@ -3608,6 +4098,24 @@ class ProductEditor(ttkb.Toplevel):
         except Exception as exc:  # pragma: no cover
             Messagebox.show_error(str(exc), "Fehler")
             return
+
+        after = self.db.get_product(produkt_id)
+        try:
+            self.db.record_audit(
+                tabelle="produkte",
+                datensatz_id=produkt_id,
+                aktion="create" if was_new else "update",
+                vorher=json.dumps(dict(before)) if before else None,
+                nachher=json.dumps(dict(after)) if after else None,
+                benutzer_id=self.user.id if self.user else None,
+            )
+            self.db.log_event(
+                ebene="INFO",
+                nachricht=f"Produkt {name_value} gespeichert",
+                benutzer_id=self.user.id if self.user else None,
+            )
+        except Exception:
+            pass
 
         self.produkt_id = produkt_id
         if was_new:
@@ -5628,6 +6136,7 @@ class MedizinprodukteApp(ttkb.Window):
         self.refresh_all()
 
     def create_widgets(self) -> None:
+        self._build_menubar()
         self.header_frame = ttkb.Frame(self)
         self.header_frame.pack(fill=tk.X, pady=10, padx=10)
 
@@ -5708,6 +6217,38 @@ class MedizinprodukteApp(ttkb.Window):
 
         self.notebook.bind("<<NotebookTabChanged>>", lambda _event: self.refresh_current())
 
+        self.after(500, self._notify_upcoming_items)
+
+    def _build_menubar(self) -> None:
+        menubar = tk.Menu(self)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Backup wiederherstellen", command=self.restore_backup_dialog)
+        file_menu.add_command(label="Archivieren", command=self.archive_logs)
+        file_menu.add_separator()
+        file_menu.add_command(label="Beenden", command=self.on_closing)
+        menubar.add_cascade(label="Datei", menu=file_menu)
+
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        tools_menu.add_command(label="Globale Suche", command=self.open_global_search)
+        tools_menu.add_command(label="ICS importieren", command=self.import_ics_dialog)
+        tools_menu.add_command(label="Logbuch", command=self.show_log_viewer)
+        tools_menu.add_command(label="Konfiguration", command=self.open_configuration)
+        tools_menu.add_command(label="Bestellungen", command=self.open_order_center)
+        menubar.add_cascade(label="Werkzeuge", menu=tools_menu)
+
+        account_menu = tk.Menu(menubar, tearoff=0)
+        account_menu.add_command(label="Mein Konto", command=self.open_account_dialog)
+        account_menu.add_command(label="Passwort ändern", command=self.open_password_dialog)
+        menubar.add_cascade(label="Konto", menu=account_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="Hilfe", command=self.open_help)
+        help_menu.add_command(label="Systemstatus", command=self.show_migration_status)
+        menubar.add_cascade(label="Hilfe", menu=help_menu)
+
+        self.config(menu=menubar)
+
     def refresh_current(self) -> None:
         current = self.notebook.select()
         widget = self.nametowidget(current)
@@ -5726,6 +6267,167 @@ class MedizinprodukteApp(ttkb.Window):
             pass
         self.db.close()
         self.destroy()
+
+    def restore_backup_dialog(self) -> None:
+        filename = filedialog.askopenfilename(
+            title="Backup auswählen",
+            filetypes=[("SQLite", "*.db"), ("Alle Dateien", "*.*")],
+        )
+        if not filename:
+            return
+        try:
+            self.db.restore_backup(Path(filename))
+        except Exception as exc:  # pragma: no cover - UI feedback
+            Messagebox.show_error(str(exc), "Fehler beim Wiederherstellen")
+            return
+        Messagebox.show_info(
+            "Backup wurde eingespielt. Bitte Anwendung neu starten, um mit den Daten zu arbeiten.",
+            "Backup wiederhergestellt",
+        )
+
+    def archive_logs(self) -> None:
+        try:
+            archive_path = self.db.archive_logs()
+        except Exception as exc:  # pragma: no cover - UI feedback
+            Messagebox.show_error(str(exc), "Archivierung fehlgeschlagen")
+            return
+        if archive_path:
+            Messagebox.show_info(
+                f"Systemlog wurde nach {archive_path} archiviert.",
+                "Archiv erstellt",
+            )
+        else:
+            Messagebox.show_info("Es gab keine veralteten Logeinträge.", "Keine Aktion erforderlich")
+
+    def open_global_search(self) -> None:
+        dialog = GlobalSearchDialog(self, self.db, self.user)
+        self.wait_window(dialog)
+
+    def import_ics_dialog(self) -> None:
+        filename = filedialog.askopenfilename(
+            title="ICS-Datei importieren",
+            filetypes=[("Kalender", "*.ics"), ("Alle Dateien", "*.*")],
+        )
+        if not filename:
+            return
+        try:
+            count = self.db.import_ics_events(Path(filename))
+        except Exception as exc:  # pragma: no cover - UI feedback
+            Messagebox.show_error(str(exc), "Import fehlgeschlagen")
+            return
+        Messagebox.show_info(f"{count} Termine importiert.", "ICS Import")
+
+    def show_log_viewer(self) -> None:
+        dialog = LogViewerDialog(self, self.db)
+        self.wait_window(dialog)
+
+    def open_configuration(self) -> None:
+        dialog = ConfigurationDialog(
+            self,
+            backup_dir=self.preferences.get("backup_dir", ""),
+            reminder_days=int(self.preferences.get("reminder_days", "7")),
+        )
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        backup_dir, reminder_days = dialog.result
+        if self.user:
+            self.db.set_user_preference(self.user.id, "backup_dir", backup_dir)
+            self.db.set_user_preference(self.user.id, "reminder_days", str(reminder_days))
+            self.preferences["backup_dir"] = backup_dir
+            self.preferences["reminder_days"] = str(reminder_days)
+
+    def open_order_center(self) -> None:
+        dialog = OrderCenterDialog(self, self.db, self.user)
+        self.wait_window(dialog)
+
+    def open_account_dialog(self) -> None:
+        if not self.user:
+            return
+        row = self.db.get_user(self.user.id)
+        if not row:
+            Messagebox.show_error("Benutzer konnte nicht geladen werden", "Fehler")
+            return
+        dialog = AccountDialog(
+            self,
+            self.db,
+            user_id=self.user.id,
+            vorname=row["vorname"] or "",
+            nachname=row["nachname"] or "",
+            email=row["email"] or "",
+            language=self.preferences.get("language", "de"),
+            theme=self.current_theme,
+        )
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        vorname, nachname, email, language, theme = dialog.result
+        self.db.update_user_profile(
+            benutzer_id=self.user.id,
+            vorname=vorname,
+            nachname=nachname,
+            email=email,
+        )
+        self.db.set_user_preference(self.user.id, "language", language)
+        self.preferences["language"] = language
+        self.user.full_name = f"{vorname} {nachname}".strip()
+        self.user.email = email
+        self.welcome_label.configure(
+            text=f"Willkommen {self.user.full_name} ({self.user.role})"
+        )
+        if theme != self.current_theme:
+            self._apply_theme(theme)
+
+    def open_password_dialog(self) -> None:
+        if not self.user:
+            return
+        dialog = PasswordChangeDialog(self)
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        old_password, new_password = dialog.result
+        authenticated = self.db.authenticate(
+            self.user.username,
+            old_password,
+            identifier=self.user.username,
+        )
+        if not authenticated:
+            Messagebox.show_error("Aktuelles Passwort ist falsch", "Fehler")
+            return
+        self.db.set_user_password(self.user.id, new_password)
+        Messagebox.show_info("Passwort wurde aktualisiert", "Erfolg")
+
+    def open_help(self) -> None:
+        dialog = HelpDialog(self)
+        self.wait_window(dialog)
+
+    def show_migration_status(self) -> None:
+        Messagebox.show_info(
+            "Datenbank-Schema ist aktuell. Neue Tabellen und Spalten werden automatisch angelegt.",
+            "Schema-Status",
+        )
+
+    def _notify_upcoming_items(self) -> None:
+        try:
+            due_products = self.db.due_products()
+            expired = self.db.expired_materials()
+            low_stock = self.db.low_stock_materials()
+        except Exception:
+            return
+        reminder_days = int(self.preferences.get("reminder_days", "7"))
+        messages = []
+        if due_products:
+            messages.append(f"{len(due_products)} Produkte benötigen Wartung.")
+        if expired:
+            messages.append(f"{len(expired)} Materialien sind abgelaufen.")
+        if low_stock:
+            messages.append(f"{len(low_stock)} Materialien unterschreiten den Soll-Bestand.")
+        if not messages:
+            return
+        Messagebox.show_info(
+            "\n".join(messages) + f"\n\nErinnerungszeitraum: {reminder_days} Tage.",
+            "Anstehende Aufgaben",
+        )
 
     def _apply_theme(self, theme: str, persist: bool = True) -> None:
         available = set(self.style.theme_names())
