@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 
 from pydantic import BaseModel, Field, validator
 
@@ -60,6 +60,16 @@ class KategorieRead(BaseModel):
         orm_mode = True
 
 
+class Choice(BaseModel):
+    id: int
+    label: str
+
+
+class StatusChoice(BaseModel):
+    value: str
+    label: str
+
+
 class ProduktComponentRead(BaseModel):
     id: int
     name: str
@@ -86,6 +96,54 @@ class ProduktRead(BaseModel):
     standort: Optional[StandortRead]
     kategorie: Optional[KategorieRead]
     komponenten: List[ProduktComponentRead] = []
+
+    class Config:
+        orm_mode = True
+
+
+class ProduktCreateRequest(BaseModel):
+    name: Optional[str]
+    typ: Optional[str]
+    seriennummer: str = Field(..., min_length=1)
+    hersteller: Optional[str]
+    anschaffungsdatum: Optional[date]
+    kategorie_id: Optional[int]
+    standort_id: Optional[int]
+    fahrzeug_id: Optional[int]
+    status: Optional[Literal["im_dienst", "in_reparatur", "ausgeschieden"]] = "im_dienst"
+    interne_kennung: Optional[str]
+    stk_intervall: Optional[int]
+    mtk_intervall: Optional[int]
+    letzte_stk: Optional[date]
+    letzte_mtk: Optional[date]
+
+
+class ProductReferenceData(BaseModel):
+    locations: List[Choice]
+    vehicles: List[Choice]
+    categories: List[Choice]
+    contacts: List[Choice]
+    products: List[Choice]
+    statuses: List[StatusChoice]
+
+
+class RepairCreateRequest(BaseModel):
+    datum: date
+    kosten: Optional[float]
+    kontakt_id: Optional[int]
+    beschreibung: Optional[str]
+    abgeschlossen: bool = False
+    mark_as_in_repair: bool = True
+
+
+class RepairRead(BaseModel):
+    id: int
+    produkt_id: int
+    datum: date
+    kosten: Optional[float]
+    kontakt_id: Optional[int]
+    beschreibung: Optional[str]
+    abgeschlossen: bool
 
     class Config:
         orm_mode = True

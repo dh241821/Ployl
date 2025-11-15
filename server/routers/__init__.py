@@ -3,6 +3,7 @@
 __all__ = [
     "auth",
     "dashboard",
+    "products",
     "notifications",
     "scanner",
     "maintenance",

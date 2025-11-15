@@ -255,8 +255,20 @@
         font-weight: 500;
       }
 
+      .inline-control {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .inline-control input[type='checkbox'] {
+        width: 1.1rem;
+        height: 1.1rem;
+      }
+
       input,
-      textarea {
+      textarea,
+      select {
         border-radius: 16px;
         border: 1px solid rgba(148, 163, 184, 0.35);
         padding: 0.9rem 1.05rem;
@@ -265,14 +277,16 @@
       }
 
       body[data-theme='dark'] input,
-      body[data-theme='dark'] textarea {
+      body[data-theme='dark'] textarea,
+      body[data-theme='dark'] select {
         background: rgba(15, 23, 42, 0.68);
         border-color: rgba(71, 85, 105, 0.52);
         color: inherit;
       }
 
       input:focus,
-      textarea:focus {
+      textarea:focus,
+      select:focus {
         outline: none;
         border-color: rgba(59, 130, 246, 0.8);
         box-shadow: 0 15px 35px -30px rgba(59, 130, 246, 0.75), 0 0 0 3px rgba(99, 102, 241, 0.25);
@@ -476,6 +490,124 @@
         <h2>📬 Benachrichtigungen</h2>
         <button id="dispatch-btn">Wartungs-Mails versenden</button>
         <pre id="notification-output"></pre>
+      </section>
+
+      <section id="product-form-section" hidden>
+        <h2>➕ Produkt erfassen</h2>
+        <form id="product-form">
+          <div class="grid" data-layout="split">
+            <label>
+              Produktname
+              <input type="text" id="product-name" placeholder="z. B. Defibrillator" />
+            </label>
+            <label>
+              Typ
+              <input type="text" id="product-type" placeholder="z. B. Corpuls3" />
+            </label>
+            <label>
+              Seriennummer
+              <input type="text" id="product-serial" required />
+            </label>
+            <label>
+              Hersteller
+              <input type="text" id="product-manufacturer" />
+            </label>
+            <label>
+              Interne Kennung
+              <input type="text" id="product-internal" />
+            </label>
+            <label>
+              Kategorie
+              <select id="product-category">
+                <option value="">Bitte auswählen</option>
+              </select>
+            </label>
+            <label>
+              Standort
+              <select id="product-location">
+                <option value="">Bitte auswählen</option>
+              </select>
+            </label>
+            <label>
+              Fahrzeug
+              <select id="product-vehicle">
+                <option value="">Optional</option>
+              </select>
+            </label>
+            <label>
+              Status
+              <select id="product-status">
+                <option value="">Standard</option>
+              </select>
+            </label>
+          </div>
+          <div class="grid" data-layout="split">
+            <label>
+              Anschaffungsdatum
+              <input type="date" id="product-acquired" />
+            </label>
+            <label>
+              Letzte STK
+              <input type="date" id="product-last-stk" />
+            </label>
+            <label>
+              Letzte MTK
+              <input type="date" id="product-last-mtk" />
+            </label>
+            <label>
+              STK-Intervall (Monate)
+              <input type="number" id="product-stk-interval" min="0" step="1" />
+            </label>
+            <label>
+              MTK-Intervall (Monate)
+              <input type="number" id="product-mtk-interval" min="0" step="1" />
+            </label>
+          </div>
+          <button type="submit">Produkt anlegen</button>
+          <p class="muted" id="product-form-message" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section id="repair-form-section" hidden>
+        <h2>🛠️ Reparatur melden</h2>
+        <form id="repair-form">
+          <div class="grid" data-layout="split">
+            <label>
+              Produkt
+              <select id="repair-product" required>
+                <option value="">Bitte auswählen</option>
+              </select>
+            </label>
+            <label>
+              Datum
+              <input type="date" id="repair-date" required />
+            </label>
+            <label>
+              Kosten (€)
+              <input type="number" id="repair-cost" min="0" step="0.01" />
+            </label>
+            <label>
+              Kontakt
+              <select id="repair-contact">
+                <option value="">Optional</option>
+              </select>
+            </label>
+            <label class="inline-control">
+              <input type="checkbox" id="repair-mark-in-repair" checked />
+              Produktstatus auf „In Reparatur“ setzen
+            </label>
+            <label class="inline-control">
+              <input type="checkbox" id="repair-complete" />
+              Reparatur abgeschlossen
+            </label>
+          </div>
+          <label>
+            Beschreibung
+            <textarea id="repair-description" rows="3" placeholder="Kurzbeschreibung der Reparatur"></textarea>
+          </label>
+          <button type="submit">Reparatur speichern</button>
+          <p class="muted" id="repair-form-message" role="status" aria-live="polite"></p>
+        </form>
       </section>
 
       <section id="ai-assistant" hidden>

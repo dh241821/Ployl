@@ -14,6 +14,7 @@ from .models import Benutzer, Dokument, Fahrzeug, FahrzeugPosition, Kostenbuchun
 from .routers import auth as auth_router
 from .routers import dashboard as dashboard_router
 from .routers import notifications as notifications_router
+from .routers import products as products_router
 from .routers import scanner as scanner_router
 from .routers import maintenance as maintenance_router
 from .routers import costs as costs_router
@@ -67,6 +68,7 @@ configure_audit_events(
 
 app.include_router(auth_router.router)
 app.include_router(dashboard_router.router)
+app.include_router(products_router.router)
 app.include_router(scanner_router.router)
 app.include_router(notifications_router.router)
 app.include_router(maintenance_router.router)

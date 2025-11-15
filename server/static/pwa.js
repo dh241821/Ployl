@@ -19,11 +19,35 @@ const arSteps = document.getElementById('ar-steps');
 const offlineIndicator = document.getElementById('offline-indicator');
 const themeToggle = document.getElementById('theme-toggle');
 const installBtn = document.getElementById('install-btn');
+const productFormSection = document.getElementById('product-form-section');
+const repairFormSection = document.getElementById('repair-form-section');
+const productForm = document.getElementById('product-form');
+const repairForm = document.getElementById('repair-form');
+const productFormMessage = document.getElementById('product-form-message');
+const repairFormMessage = document.getElementById('repair-form-message');
+const productStatusSelect = document.getElementById('product-status');
+const productLocationSelect = document.getElementById('product-location');
+const productVehicleSelect = document.getElementById('product-vehicle');
+const productCategorySelect = document.getElementById('product-category');
+const repairProductSelect = document.getElementById('repair-product');
+const repairContactSelect = document.getElementById('repair-contact');
+const repairMarkInRepair = document.getElementById('repair-mark-in-repair');
+const repairComplete = document.getElementById('repair-complete');
 let deferredPrompt = null;
 let accessToken = null;
 let statusChart;
 let repairChart;
 let offlineQueue = [];
+let productReferenceCache = null;
+let storedProductReferences = null;
+
+try {
+  storedProductReferences = JSON.parse(localStorage.getItem('productReferences') || 'null');
+  productReferenceCache = storedProductReferences;
+} catch (error) {
+  storedProductReferences = null;
+  productReferenceCache = null;
+}
 
 try {
   offlineQueue = JSON.parse(localStorage.getItem('offlineQueue') || '[]');
@@ -150,10 +174,18 @@ loginForm?.addEventListener('submit', async (event) => {
   dashboard.hidden = false;
   scannerSection.hidden = false;
   notificationsSection.hidden = false;
+  if (productFormSection) productFormSection.hidden = false;
+  if (repairFormSection) repairFormSection.hidden = false;
   if (aiSection) aiSection.hidden = false;
   if (iotSection) iotSection.hidden = false;
   if (arSection) arSection.hidden = false;
-  await Promise.all([loadDashboard(), loadIoTDevices(), loadArInstruction(), refreshInventoryForecasts()]);
+  await Promise.all([
+    loadDashboard(),
+    loadIoTDevices(),
+    loadArInstruction(),
+    refreshInventoryForecasts(),
+    loadProductReferences(),
+  ]);
   initScanner();
   syncOfflineQueue();
 });
@@ -238,6 +270,25 @@ async function refreshInventoryForecasts() {
   }
 }
 
+async function loadProductReferences() {
+  if (!productFormSection && !repairFormSection) return;
+  if (!navigator.onLine && productReferenceCache) {
+    applyProductReferences(productReferenceCache);
+    return;
+  }
+  try {
+    const data = await api('/api/products/references');
+    productReferenceCache = data;
+    localStorage.setItem('productReferences', JSON.stringify(data));
+    applyProductReferences(data);
+  } catch (error) {
+    console.warn('Referenzdaten konnten nicht geladen werden', error);
+    if (productReferenceCache) {
+      applyProductReferences(productReferenceCache);
+    }
+  }
+}
+
 function initScanner() {
   const html5QrCode = new Html5Qrcode('qr-reader');
   html5QrCode.start({ facingMode: 'environment' }, { fps: 10, qrbox: 250 }, async (decodedText) => {
@@ -287,9 +338,180 @@ aiForm?.addEventListener('submit', async (event) => {
   }
 });
 
+productForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!productFormMessage) return;
+  const payload = serializeProductForm();
+  if (!payload.seriennummer) {
+    productFormMessage.textContent = 'Bitte eine Seriennummer angeben.';
+    return;
+  }
+  try {
+    if (!navigator.onLine) {
+      await queueOfflineChange('products.create', payload);
+      productFormMessage.textContent = 'Offline gespeichert – Synchronisation erfolgt automatisch.';
+      productForm.reset();
+      return;
+    }
+    const result = await api('/api/products', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    productFormMessage.textContent = `Produkt ${result.name} angelegt.`;
+    productForm.reset();
+    await loadProductReferences();
+  } catch (error) {
+    productFormMessage.textContent = toMessage(error);
+  }
+});
+
+repairForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!repairFormMessage) return;
+  const { produktId, payload } = serializeRepairForm();
+  if (!produktId) {
+    repairFormMessage.textContent = 'Bitte ein Produkt auswählen.';
+    return;
+  }
+  if (!payload.datum) {
+    repairFormMessage.textContent = 'Bitte ein Reparaturdatum angeben.';
+    return;
+  }
+  try {
+    if (!navigator.onLine) {
+      await queueOfflineChange('repairs.create', { produkt_id: produktId, payload });
+      repairFormMessage.textContent = 'Offline gespeichert – Synchronisation erfolgt automatisch.';
+      repairForm.reset();
+      return;
+    }
+    await api(`/api/products/${produktId}/repairs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    repairFormMessage.textContent = 'Reparatur dokumentiert.';
+    repairForm.reset();
+  } catch (error) {
+    repairFormMessage.textContent = toMessage(error);
+  }
+});
+
 setInterval(() => {
   if (accessToken) {
     loadDashboard();
     loadIoTDevices();
   }
 }, 60000);
+
+function applyProductReferences(data) {
+  if (productLocationSelect) fillSelect(productLocationSelect, data.locations, true, 'Bitte auswählen');
+  if (productVehicleSelect) fillSelect(productVehicleSelect, data.vehicles, true, 'Optional');
+  if (productCategorySelect) fillSelect(productCategorySelect, data.categories, true, 'Bitte auswählen');
+  if (productStatusSelect) {
+    const current = productStatusSelect.value;
+    fillSelect(productStatusSelect, data.statuses, true, 'Standard');
+    if (current && productStatusSelect.querySelector(`option[value="${current}"]`)) {
+      productStatusSelect.value = current;
+    }
+  }
+  if (repairProductSelect) fillSelect(repairProductSelect, data.products, true, 'Bitte auswählen');
+  if (repairContactSelect) fillSelect(repairContactSelect, data.contacts, true, 'Optional');
+}
+
+function fillSelect(select, options, includeBlank = false, blankLabel = 'Bitte auswählen') {
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = '';
+  if (includeBlank) {
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = blankLabel;
+    select.appendChild(blank);
+  }
+  options.forEach((option) => {
+    const opt = document.createElement('option');
+    const value = option.value ?? option.id;
+    if (value !== undefined && value !== null) {
+      opt.value = String(value);
+    } else {
+      opt.value = '';
+    }
+    opt.textContent = option.label;
+    select.appendChild(opt);
+  });
+  if (current && select.querySelector(`option[value="${current}"]`)) {
+    select.value = current;
+  } else if (!includeBlank && select.options.length) {
+    select.selectedIndex = 0;
+  }
+}
+
+function valueOrNull(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    return trimmed === '' ? null : trimmed;
+  }
+  return raw;
+}
+
+function coerceNumber(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function serializeProductForm() {
+  return {
+    name: valueOrNull(document.getElementById('product-name')?.value),
+    typ: valueOrNull(document.getElementById('product-type')?.value),
+    seriennummer: (document.getElementById('product-serial')?.value || '').trim(),
+    hersteller: valueOrNull(document.getElementById('product-manufacturer')?.value),
+    interne_kennung: valueOrNull(document.getElementById('product-internal')?.value),
+    kategorie_id: coerceNumber(productCategorySelect?.value),
+    standort_id: coerceNumber(productLocationSelect?.value),
+    fahrzeug_id: coerceNumber(productVehicleSelect?.value),
+    status: valueOrNull(productStatusSelect?.value),
+    anschaffungsdatum: valueOrNull(document.getElementById('product-acquired')?.value),
+    letzte_stk: valueOrNull(document.getElementById('product-last-stk')?.value),
+    letzte_mtk: valueOrNull(document.getElementById('product-last-mtk')?.value),
+    stk_intervall: coerceNumber(document.getElementById('product-stk-interval')?.value),
+    mtk_intervall: coerceNumber(document.getElementById('product-mtk-interval')?.value),
+  };
+}
+
+function serializeRepairForm() {
+  const produktId = coerceNumber(repairProductSelect?.value);
+  return {
+    produktId,
+    payload: {
+      datum: document.getElementById('repair-date')?.value || '',
+      kosten: coerceNumber(document.getElementById('repair-cost')?.value),
+      kontakt_id: coerceNumber(repairContactSelect?.value),
+      beschreibung: valueOrNull(document.getElementById('repair-description')?.value),
+      abgeschlossen: Boolean(repairComplete?.checked),
+      mark_as_in_repair: repairMarkInRepair ? Boolean(repairMarkInRepair.checked) : true,
+    },
+  };
+}
+
+function toMessage(error) {
+  if (!error) return 'Unbekannter Fehler';
+  if (typeof error === 'string') return error;
+  const message = error.message || 'Unbekannter Fehler';
+  try {
+    const parsed = JSON.parse(message);
+    if (parsed && typeof parsed === 'object') {
+      if (parsed.detail) return Array.isArray(parsed.detail) ? parsed.detail.join(', ') : parsed.detail;
+      if (parsed.message) return parsed.message;
+    }
+  } catch (_err) {
+    // ignore JSON parse errors
+  }
+  return message;
+}
+
+if (storedProductReferences) {
+  applyProductReferences(storedProductReferences);
+}
