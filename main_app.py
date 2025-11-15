@@ -13,7 +13,7 @@ import sqlite3
 import ttkbootstrap as ttkb
 from ttkbootstrap.constants import BOTH, LEFT, RIGHT, W
 from ttkbootstrap.dialogs import Messagebox
-from ttkbootstrap.widgets import DateEntry
+from ttkbootstrap.widgets import AutocompleteCombobox, DateEntry
 from ttkbootstrap.widgets.tableview import Tableview
 
 from app.database import DatabaseManager, User
@@ -84,13 +84,12 @@ class LoginDialog(ttkb.Toplevel):
         self.identifier_var = ttkb.StringVar()
 
         ttkb.Label(container, text="Dienstnummer").grid(row=0, column=0, sticky=W, pady=(0, 5))
-        self.identifier_box = ttkb.Combobox(
+        self.identifier_box = AutocompleteCombobox(
             container,
             textvariable=self.identifier_var,
-            values=identifiers,
             width=30,
+            completevalues=identifiers,
         )
-        self.identifier_box.configure(completevalues=identifiers)
         self.identifier_box.grid(row=1, column=0, sticky=W)
         if identifiers:
             self.identifier_var.set(identifiers[0])
