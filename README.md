@@ -5,6 +5,7 @@ Medizinprodukte-Management System mit Desktop-GUI **und** Netzwerk-Backend. Die 
 - **Windows-Anleitung:** [docs/windows_installation.md](docs/windows_installation.md)
 - **Benutzerhandbuch:** [docs/benutzerhandbuch.md](docs/benutzerhandbuch.md)
 - **Technische Dokumentation:** [docs/system_architecture.md](docs/system_architecture.md)
+- **Roadmap & Prioritäten:** [docs/roadmap.md](docs/roadmap.md)
 
 ## Desktop Schnellstart
 
