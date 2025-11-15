@@ -1335,41 +1335,43 @@ class DatabaseManager:
                 )
                 self.add_product_log(produkt_id, "aktualisiert", "Produktdaten aktualisiert")
                 return produkt_id
+            values = (
+                name,
+                typ,
+                seriennummer,
+                hersteller,
+                anschaffungsdatum_str,
+                kategorie_id,
+                standort_id,
+                fahrzeug_id,
+                status,
+                interne_kennung,
+                stk_intervall,
+                mtk_intervall,
+                letzte_stk_str,
+                letzte_mtk_str,
+                naechste_stk_str,
+                naechste_mtk_str,
+                stk_flag,
+                mtk_flag,
+                lagerort,
+                produkt_typ_id,
+                produkt_modell_id,
+                produkt_hersteller_id,
+                informationstext,
+            )
+            placeholders = ", ".join(["?"] * len(values))
             cur = self.connection.execute(
-                """
+                f"""
                 INSERT INTO produkte (
                     name, typ, seriennummer, hersteller, anschaffungsdatum, kategorie_id, standort_id,
                     fahrzeug_id, status, interne_kennung, stk_intervall, mtk_intervall, letzte_stk,
                     letzte_mtk, naechste_stk, naechste_mtk, stk_aktiv, mtk_aktiv, lagerort, produkt_typ_id,
                     produkt_modell_id, produkt_hersteller_id, informationstext
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES ({placeholders})
                 """,
-                (
-                    name,
-                    typ,
-                    seriennummer,
-                    hersteller,
-                    anschaffungsdatum_str,
-                    kategorie_id,
-                    standort_id,
-                    fahrzeug_id,
-                    status,
-                    interne_kennung,
-                    stk_intervall,
-                    mtk_intervall,
-                    letzte_stk_str,
-                    letzte_mtk_str,
-                    naechste_stk_str,
-                    naechste_mtk_str,
-                    stk_flag,
-                    mtk_flag,
-                    lagerort,
-                    produkt_typ_id,
-                    produkt_modell_id,
-                    produkt_hersteller_id,
-                    informationstext,
-                ),
+                values,
             )
             new_id = int(cur.lastrowid)
             self.add_product_log(new_id, "angelegt", "Produkt erstellt")
