@@ -15,7 +15,7 @@ import shutil
 import sqlite3
 
 import ttkbootstrap as ttkb
-from ttkbootstrap.constants import BOTH, LEFT, RIGHT, W
+from ttkbootstrap.constants import BOTH, LEFT, RIGHT, W, Y
 from ttkbootstrap.dialogs import Messagebox
 from ttkbootstrap.widgets import DateEntry
 from ttkbootstrap.widgets.tableview import Tableview
@@ -125,6 +125,105 @@ class IdentifierCombobox(ttkb.Combobox):
         self.icursor(len(typed))
         self.select_range(len(typed), tk.END)
 
+
+class NavigationSidebar(ttkb.Frame):
+    """Scrollable navigation sidebar with selectable buttons."""
+
+    def __init__(self, master: tk.Misc, *, on_select: Callable[[str], None]) -> None:
+        super().__init__(master, padding=(14, 18), style="Sidebar.TFrame")
+        self.on_select = on_select
+        self._commands: Dict[str, Callable[[], None]] = {}
+        self._buttons: Dict[str, ttkb.Button] = {}
+        self._selected: Optional[str] = None
+
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        style = ttkb.Style()
+        sidebar_bg = style.lookup("Sidebar.TFrame", "background") or "#f1f5f9"
+
+        self.canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0, background=sidebar_bg)
+        self.canvas.grid(row=0, column=0, sticky=tk.NSEW)
+        self.scrollbar = ttkb.Scrollbar(self, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.scrollbar.grid(row=0, column=1, sticky=tk.NS, padx=(8, 0))
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.inner = ttkb.Frame(self.canvas, padding=(0, 4), style="SidebarInner.TFrame")
+        self.inner.bind(
+            "<Configure>",
+            lambda _event: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
+        )
+        self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+
+        self.inner.columnconfigure(0, weight=1)
+
+    def add_heading(self, text: str) -> None:
+        ttkb.Label(
+            self.inner,
+            text=text.upper(),
+            style="SidebarHeading.TLabel",
+            padding=(6, 12, 6, 4),
+        ).grid(sticky=tk.W, pady=(10, 0))
+
+    def add_item(self, key: str, label: str, command: Callable[[], None]) -> None:
+        self._commands[key] = command
+
+        def handle_select(k: str = key) -> None:
+            self.select(k)
+            cmd = self._commands.get(k)
+            if cmd:
+                cmd()
+
+        button = ttkb.Button(
+            self.inner,
+            text=label,
+            command=handle_select,
+            width=22,
+            bootstyle="secondary",
+        )
+        button.grid(sticky=tk.EW, pady=4)
+        self._buttons[key] = button
+
+    def select(self, key: str) -> None:
+        if self._selected == key:
+            return
+        for name, button in self._buttons.items():
+            button.configure(bootstyle="secondary" if name != key else "primary")
+        self._selected = key
+
+
+class LargeDialog(ttkb.Toplevel):
+    """Toplevel window with a sensible default geometry."""
+
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        min_width: int = 900,
+        min_height: int = 620,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(master, **kwargs)
+        self._min_width = min_width
+        self._min_height = min_height
+        self.after(40, self._apply_default_size)
+
+    def configure_size(self, *, width: Optional[int] = None, height: Optional[int] = None) -> None:
+        if width:
+            self._min_width = width
+        if height:
+            self._min_height = height
+        self._apply_default_size()
+
+    def _apply_default_size(self) -> None:
+        try:
+            self.update_idletasks()
+        except tk.TclError:
+            return
+        width = max(self._min_width, self.winfo_width() or self._min_width)
+        height = max(self._min_height, self.winfo_height() or self._min_height)
+        self.minsize(self._min_width, self._min_height)
+        self.geometry(f"{width}x{height}")
 
 class LoginDialog(ttkb.Toplevel):
     """Simple login dialog that blocks the root window until closed."""
@@ -1192,12 +1291,10 @@ class MaterialsView(ttkb.Frame):
         MaterialStatisticsDialog(self, stats)
 
 
-class MaterialStatisticsDialog(ttkb.Toplevel):
+class MaterialStatisticsDialog(LargeDialog):
     def __init__(self, master: tk.Misc, stats: Dict[str, Any]) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=520, min_height=420)
         self.title("Materialstatistik")
-        self.geometry("420x360")
-        self.resizable(False, False)
 
         container = ttkb.Frame(self, padding=20)
         container.pack(fill=BOTH, expand=True)
@@ -1493,74 +1590,136 @@ class MasterDataView(ttkb.Frame):
         super().__init__(master)
         self.db = db
 
-        notebook = ttkb.Notebook(self)
-        notebook.pack(fill=BOTH, expand=True, padx=10, pady=10)
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
 
-        self.categories_frame = CategoriesFrame(notebook, db)
-        notebook.add(self.categories_frame, text="Kategorien")
+        nav_container = ttkb.Frame(self, padding=(10, 10, 0, 10))
+        nav_container.grid(row=0, column=0, sticky=tk.NS)
+        nav_container.rowconfigure(0, weight=1)
+
+        self.nav = ttkb.Treeview(nav_container, show="tree", selectmode="browse", height=18)
+        self.nav.grid(row=0, column=0, sticky=tk.NS)
+        nav_scroll = ttkb.Scrollbar(nav_container, orient=tk.VERTICAL, command=self.nav.yview)
+        nav_scroll.grid(row=0, column=1, sticky=tk.NS, padx=(4, 0))
+        self.nav.configure(yscrollcommand=nav_scroll.set)
+
+        self.content = ttkb.Frame(self, padding=(10, 10, 10, 10))
+        self.content.grid(row=0, column=1, sticky=tk.NSEW)
+        self.content.columnconfigure(0, weight=1)
+        self.content.rowconfigure(0, weight=1)
+
+        self.frames: Dict[str, ttkb.Frame] = {}
+
+        general = self.nav.insert("", "end", "general", text="Allgemein")
+        product_group = self.nav.insert("", "end", "products", text="Produkte")
+        vehicle_group = self.nav.insert("", "end", "vehicles", text="Fahrzeuge")
+        support_group = self.nav.insert("", "end", "support", text="Support")
+        if show_locations:
+            locations_group = self.nav.insert("", "end", "locations", text="Standorte")
+        else:
+            locations_group = None
+
+        for group in (general, product_group, vehicle_group, support_group):
+            self.nav.item(group, open=True)
+        if locations_group:
+            self.nav.item(locations_group, open=True)
+
+        self.categories_frame = CategoriesFrame(self.content, db)
+        self._register_section("categories", general, "Kategorien", self.categories_frame)
 
         self.locations_frame: Optional[LocationsFrame] = None
         if show_locations:
-            self.locations_frame = LocationsFrame(notebook, db)
+            self.locations_frame = LocationsFrame(self.content, db)
             self.locations_frame.set_write_permissions(allow_edit_locations)
-            notebook.add(self.locations_frame, text="Standorte")
+            self._register_section("locations", locations_group or general, "Standortverwaltung", self.locations_frame)
 
-        self.contacts_frame = ContactsFrame(notebook, db)
-        notebook.add(self.contacts_frame, text="Kontakte")
+        self.contacts_frame = ContactsFrame(self.content, db)
+        self._register_section("contacts", support_group, "Kontakte", self.contacts_frame)
 
-        self.product_types_frame = ProductTypesFrame(notebook, db)
-        notebook.add(self.product_types_frame, text="Produkttypen")
+        self.product_types_frame = ProductTypesFrame(self.content, db)
+        self._register_section("product_types", product_group, "Produkttypen", self.product_types_frame)
 
-        self.product_models_frame = ProductModelsFrame(notebook, db)
-        notebook.add(self.product_models_frame, text="Produktmodelle")
+        self.product_models_frame = ProductModelsFrame(self.content, db)
+        self._register_section("product_models", product_group, "Produktmodelle", self.product_models_frame)
 
-        self.product_manufacturers_frame = ProductManufacturersFrame(notebook, db)
-        notebook.add(self.product_manufacturers_frame, text="Hersteller")
+        self.product_manufacturers_frame = ProductManufacturersFrame(self.content, db)
+        self._register_section("product_manufacturers", product_group, "Hersteller", self.product_manufacturers_frame)
 
-        self.component_types_frame = ComponentTypesFrame(notebook, db)
-        notebook.add(self.component_types_frame, text="Komponententypen")
+        self.component_types_frame = ComponentTypesFrame(self.content, db)
+        self._register_section("component_types", product_group, "Komponententypen", self.component_types_frame)
 
-        self.maintenance_types_frame = MaintenanceTypesFrame(notebook, db)
-        notebook.add(self.maintenance_types_frame, text="Wartungstypen")
+        self.maintenance_types_frame = MaintenanceTypesFrame(self.content, db)
+        self._register_section("maintenance_types", product_group, "Wartungstypen", self.maintenance_types_frame)
 
-        self.repair_types_frame = RepairTypesFrame(notebook, db)
-        notebook.add(self.repair_types_frame, text="Reparaturarten")
+        self.repair_types_frame = RepairTypesFrame(self.content, db)
+        self._register_section("repair_types", product_group, "Reparaturarten", self.repair_types_frame)
 
-        self.upload_categories_frame = UploadCategoriesFrame(notebook, db)
-        notebook.add(self.upload_categories_frame, text="Upload-Kategorien")
+        self.upload_categories_frame = UploadCategoriesFrame(self.content, db)
+        self._register_section("upload_categories", support_group, "Upload-Kategorien", self.upload_categories_frame)
 
-        self.material_names_frame = MaterialNamesFrame(notebook, db)
-        notebook.add(self.material_names_frame, text="Materialbezeichnungen")
+        self.material_names_frame = MaterialNamesFrame(self.content, db)
+        self._register_section("material_names", general, "Materialbezeichnungen", self.material_names_frame)
 
-        self.vehicle_brands_frame = VehicleBrandsFrame(notebook, db)
-        notebook.add(self.vehicle_brands_frame, text="Fahrzeugmarken")
+        self.vehicle_brands_frame = VehicleBrandsFrame(self.content, db)
+        self._register_section("vehicle_brands", vehicle_group, "Fahrzeugmarken", self.vehicle_brands_frame)
 
-        self.vehicle_models_frame = VehicleModelsFrame(notebook, db)
-        notebook.add(self.vehicle_models_frame, text="Fahrzeugtypen")
+        self.vehicle_models_frame = VehicleModelsFrame(self.content, db)
+        self._register_section("vehicle_models", vehicle_group, "Fahrzeugtypen", self.vehicle_models_frame)
 
-        self.vehicle_categories_frame = VehicleCategoriesFrame(notebook, db)
-        notebook.add(self.vehicle_categories_frame, text="Fahrzeugkategorien")
+        self.vehicle_categories_frame = VehicleCategoriesFrame(self.content, db)
+        self._register_section("vehicle_categories", vehicle_group, "Fahrzeugkategorien", self.vehicle_categories_frame)
 
-        self.users_frame = UsersFrame(notebook, db)
-        notebook.add(self.users_frame, text="Benutzer")
+        self.users_frame = UsersFrame(self.content, db)
+        self._register_section("users", support_group, "Benutzer", self.users_frame)
+
+        self.nav.bind("<<TreeviewSelect>>", self._on_nav_select)
+
+        self._initial_selection()
 
     def refresh(self) -> None:
-        self.categories_frame.refresh()
-        if self.locations_frame:
-            self.locations_frame.refresh()
-        self.contacts_frame.refresh()
-        self.product_types_frame.refresh()
-        self.product_models_frame.refresh()
-        self.product_manufacturers_frame.refresh()
-        self.component_types_frame.refresh()
-        self.maintenance_types_frame.refresh()
-        self.repair_types_frame.refresh()
-        self.upload_categories_frame.refresh()
-        self.material_names_frame.refresh()
-        self.vehicle_brands_frame.refresh()
-        self.vehicle_models_frame.refresh()
-        self.vehicle_categories_frame.refresh()
-        self.users_frame.refresh()
+        for frame in self.frames.values():
+            if hasattr(frame, "refresh"):
+                frame.refresh()  # type: ignore[call-arg]
+
+    def _register_section(
+        self,
+        key: str,
+        parent: Optional[str],
+        label: str,
+        frame: ttkb.Frame,
+    ) -> None:
+        frame.grid(row=0, column=0, sticky=tk.NSEW)
+        frame.grid_remove()
+        self.frames[key] = frame
+        parent_id = parent if parent is not None else ""
+        self.nav.insert(parent_id, "end", key, text=label)
+
+    def _on_nav_select(self, _event: tk.Event) -> None:  # type: ignore[override]
+        selection = self.nav.selection()
+        if not selection:
+            return
+        item = selection[0]
+        if item in self.frames:
+            self._show_frame(item)
+            return
+        children = self.nav.get_children(item)
+        if children:
+            self.nav.selection_set(children[0])
+            self._show_frame(children[0])
+
+    def _show_frame(self, key: str) -> None:
+        for frame_key, frame in self.frames.items():
+            if frame_key == key:
+                frame.grid()
+            else:
+                frame.grid_remove()
+
+    def _initial_selection(self) -> None:
+        # Choose the first available frame for display
+        if self.frames:
+            first_key = next(iter(self.frames))
+            self.nav.selection_set(first_key)
+            self._show_frame(first_key)
 
 
 class CategoriesFrame(ttkb.Frame):
@@ -3026,17 +3185,15 @@ class AccountDialog(ttkb.Toplevel):
         self.destroy()
 
 
-class GlobalSearchDialog(ttkb.Toplevel):
+class GlobalSearchDialog(LargeDialog):
     def __init__(
         self,
         master: tk.Misc,
         db: DatabaseManager,
         user: Optional[User],
     ) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=780, min_height=520)
         self.title("Globale Suche")
-        self.resizable(True, True)
-        self.geometry("620x420")
         self.db = db
         self.user = user
 
@@ -3091,12 +3248,10 @@ class GlobalSearchDialog(ttkb.Toplevel):
                 )
 
 
-class LogViewerDialog(ttkb.Toplevel):
+class LogViewerDialog(LargeDialog):
     def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=780, min_height=520)
         self.title("System-Log")
-        self.resizable(True, True)
-        self.geometry("680x420")
         self.db = db
 
         container = ttkb.Frame(self, padding=15)
@@ -3127,11 +3282,10 @@ class LogViewerDialog(ttkb.Toplevel):
             )
 
 
-class ConfigurationDialog(ttkb.Toplevel):
+class ConfigurationDialog(LargeDialog):
     def __init__(self, master: tk.Misc, *, backup_dir: str, reminder_days: int) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=520, min_height=260)
         self.title("Konfiguration")
-        self.resizable(False, False)
         self.result: Optional[Tuple[str, int]] = None
 
         container = ttkb.Frame(self, padding=20)
@@ -3169,12 +3323,10 @@ class ConfigurationDialog(ttkb.Toplevel):
         self.destroy()
 
 
-class OrderCenterDialog(ttkb.Toplevel):
+class OrderCenterDialog(LargeDialog):
     def __init__(self, master: tk.Misc, db: DatabaseManager, user: Optional[User]) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=900, min_height=560)
         self.title("Bestellwesen")
-        self.resizable(True, True)
-        self.geometry("760x480")
         self.db = db
         self.user = user
 
@@ -3256,11 +3408,10 @@ class OrderCenterDialog(ttkb.Toplevel):
         self.refresh()
 
 
-class NewOrderDialog(ttkb.Toplevel):
+class NewOrderDialog(LargeDialog):
     def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=640, min_height=420)
         self.title("Bestellung anlegen")
-        self.resizable(False, False)
         self.result: Optional[Tuple[Optional[int], str, List[Tuple[str, int]]]] = None
         self.db = db
 
@@ -3318,12 +3469,10 @@ class NewOrderDialog(ttkb.Toplevel):
         self.destroy()
 
 
-class HelpDialog(ttkb.Toplevel):
+class HelpDialog(LargeDialog):
     def __init__(self, master: tk.Misc) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=760, min_height=560)
         self.title("Hilfe")
-        self.geometry("700x500")
-        self.resizable(True, True)
 
         container = ttkb.Frame(self, padding=15)
         container.pack(fill=BOTH, expand=True)
@@ -3361,7 +3510,7 @@ class HelpDialog(ttkb.Toplevel):
         else:
             Messagebox.show_info("HTML-Dokumentation nicht gefunden.", "Hinweis")
 
-class PersonalizationDialog(ttkb.Toplevel):
+class PersonalizationDialog(LargeDialog):
     def __init__(
         self,
         master: MedizinprodukteApp,
@@ -3370,9 +3519,8 @@ class PersonalizationDialog(ttkb.Toplevel):
         font_scale: float,
         show_welcome: bool,
     ) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=480, min_height=320)
         self.title("Personalisierung")
-        self.resizable(False, False)
         self.result: Optional[Tuple[str, float, bool]] = None
 
         container = ttkb.Frame(self, padding=20)
@@ -3438,7 +3586,7 @@ class PersonalizationDialog(ttkb.Toplevel):
         self.destroy()
 
 
-class ProductEditor(ttkb.Toplevel):
+class ProductEditor(LargeDialog):
     def __init__(
         self,
         master: tk.Misc,
@@ -3448,13 +3596,12 @@ class ProductEditor(ttkb.Toplevel):
         initial_tab: str = "details",
         user: Optional[User] = None,
     ) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=980, min_height=760)
         self.db = db
         self.produkt_id = produkt_id
         self.saved = False
         self.initial_tab = initial_tab
         self.title("Produkt bearbeiten" if produkt_id else "Neues Produkt")
-        self.geometry("720x650")
         self.user = user
 
         self.categories = db.list_categories("produkt")
@@ -4370,7 +4517,7 @@ class ComponentsTab(ttkb.Frame):
         self.pending_cache = {}
 
 
-class ComponentFormDialog(ttkb.Toplevel):
+class ComponentFormDialog(LargeDialog):
     def __init__(
         self,
         master: tk.Misc,
@@ -4378,9 +4525,8 @@ class ComponentFormDialog(ttkb.Toplevel):
         component_types: List[sqlite3.Row],
         data: Optional[sqlite3.Row] = None,
     ) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=520, min_height=360)
         self.title(title)
-        self.resizable(False, False)
         self.component_types = component_types
         self.result: Optional[Dict[str, Any]] = None
 
@@ -4754,7 +4900,7 @@ class MaintenanceTab(ttkb.Frame):
         if cleaned and cleaned not in self.maintenance_types:
             self.maintenance_types.append(cleaned)
             self.maintenance_types.sort()
-class MaintenanceFormDialog(ttkb.Toplevel):
+class MaintenanceFormDialog(LargeDialog):
     def __init__(
         self,
         master: tk.Misc,
@@ -4763,9 +4909,8 @@ class MaintenanceFormDialog(ttkb.Toplevel):
         data: Optional[sqlite3.Row] = None,
         maintenance_types: Optional[Sequence[str]] = None,
     ) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=540, min_height=400)
         self.title(title)
-        self.resizable(False, False)
         self.result: Optional[Dict[str, Any]] = None
 
         container = ttkb.Frame(self, padding=20)
@@ -5016,7 +5161,7 @@ class RepairsTab(ttkb.Frame):
         Messagebox.show_info("\n\n".join(lines), "Anhänge")
 
 
-class RepairFormDialog(ttkb.Toplevel):
+class RepairFormDialog(LargeDialog):
     def __init__(
         self,
         master: tk.Misc,
@@ -5025,9 +5170,8 @@ class RepairFormDialog(ttkb.Toplevel):
         upload_categories: List[sqlite3.Row],
         contacts: List[sqlite3.Row],
     ) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=680, min_height=520)
         self.title("Reparatur melden")
-        self.resizable(False, False)
         self.repair_types = repair_types
         self.upload_categories = upload_categories
         self.contacts = contacts
@@ -5159,11 +5303,10 @@ class RepairFormDialog(ttkb.Toplevel):
         self.destroy()
 
 
-class AttachmentCategoryDialog(ttkb.Toplevel):
+class AttachmentCategoryDialog(LargeDialog):
     def __init__(self, master: tk.Misc, categories: List[sqlite3.Row]) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=420, min_height=240)
         self.title("Kategorie wählen")
-        self.resizable(False, False)
         self.result: Optional[Tuple[Optional[int], str]] = None
 
         container = ttkb.Frame(self, padding=20)
@@ -5201,7 +5344,7 @@ class AttachmentCategoryDialog(ttkb.Toplevel):
         self.destroy()
 
 
-class MassUploadDialog(ttkb.Toplevel):
+class MassUploadDialog(LargeDialog):
     def __init__(
         self,
         master: tk.Misc,
@@ -5209,14 +5352,12 @@ class MassUploadDialog(ttkb.Toplevel):
         *,
         user: Optional[User] = None,
     ) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=900, min_height=680)
         self.db = db
         self.user = user
         self.created = 0
         self.errors: List[str] = []
         self.title("Massenupload Produkte")
-        self.geometry("780x620")
-        self.resizable(True, True)
 
         self.categories = db.list_categories("produkt")
         self.product_types = db.list_product_types()
@@ -5530,7 +5671,7 @@ class MassUploadDialog(ttkb.Toplevel):
         modell = self.modell_var.get().strip()
         parts = [part for part in (typ, modell) if part]
         return " ".join(parts)
-class VehicleEditor(ttkb.Toplevel):
+class VehicleEditor(LargeDialog):
     def __init__(
         self,
         master: tk.Misc,
@@ -5539,12 +5680,11 @@ class VehicleEditor(ttkb.Toplevel):
         *,
         user: Optional[User] = None,
     ) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=820, min_height=640)
         self.db = db
         self.fahrzeug_id = fahrzeug_id
         self.saved = False
         self.title("Fahrzeug bearbeiten" if fahrzeug_id else "Neues Fahrzeug")
-        self.geometry("560x520")
         self.user = user
 
         self.brands = db.list_vehicle_brands()
@@ -5917,14 +6057,13 @@ class VehicleTransferDialog(ttkb.Toplevel):
         self.destroy()
 
 
-class MaterialEditor(ttkb.Toplevel):
+class MaterialEditor(LargeDialog):
     def __init__(self, master: tk.Misc, db: DatabaseManager, material_id: Optional[int] = None) -> None:
-        super().__init__(master)
+        super().__init__(master, min_width=720, min_height=520)
         self.db = db
         self.material_id = material_id
         self.saved = False
         self.title("Material bearbeiten" if material_id else "Neues Material")
-        self.geometry("520x420")
 
         self.categories = db.list_categories("material")
         self.material_names = [row["name"] for row in db.list_material_names()]
@@ -6165,21 +6304,31 @@ class MedizinprodukteApp(ttkb.Window):
 
         self._update_welcome_visibility()
 
-        self.notebook = ttkb.Notebook(self)
+        layout = ttkb.Frame(self)
+        layout.pack(fill=BOTH, expand=True, padx=10, pady=(0, 12))
+
+        self.sidebar = NavigationSidebar(layout, on_select=self._on_sidebar_select)
+        self.sidebar.pack(side=LEFT, fill=tk.Y, padx=(0, 16))
+        self.sidebar.add_heading("Arbeitsbereiche")
+
+        content = ttkb.Frame(layout)
+        content.pack(side=LEFT, fill=BOTH, expand=True)
+
+        self.notebook = ttkb.Notebook(content)
         self.notebook.pack(fill=BOTH, expand=True)
         self.views = []
+        self._view_map: Dict[str, ttkb.Frame] = {}
+        self._nav_order: List[str] = []
 
         self.dashboard_view = DashboardView(self.notebook, self.db)
-        self.notebook.add(self.dashboard_view, text="Dashboard")
         self.dashboard_view.update_palette(self.current_theme in self._dark_themes())
-        self.views.append(self.dashboard_view)
+        self._register_view("dashboard", "Dashboard", "🏠  Dashboard", self.dashboard_view)
 
         if self.user and self.user.can_read("produkte"):
             self.products_view = ProductsView(self.notebook, self.db, user=self.user)
             self.products_view.set_write_permissions(self.user.can_write("produkte"))
             self.products_view.set_user(self.user)
-            self.notebook.add(self.products_view, text="Produkte")
-            self.views.append(self.products_view)
+            self._register_view("products", "Produkte", "🗂️  Produkte", self.products_view)
         else:
             self.products_view = None
 
@@ -6187,8 +6336,7 @@ class MedizinprodukteApp(ttkb.Window):
             self.vehicles_view = VehiclesView(self.notebook, self.db)
             self.vehicles_view.set_write_permissions(self.user.can_write("fahrzeuge"))
             self.vehicles_view.set_user(self.user)
-            self.notebook.add(self.vehicles_view, text="Fahrzeuge")
-            self.views.append(self.vehicles_view)
+            self._register_view("vehicles", "Fahrzeuge", "🚑  Fahrzeuge", self.vehicles_view)
         else:
             self.vehicles_view = None
 
@@ -6196,14 +6344,12 @@ class MedizinprodukteApp(ttkb.Window):
             self.materials_view = MaterialsView(self.notebook, self.db)
             self.materials_view.set_write_permissions(self.user.can_write("material"))
             self.materials_view.set_user(self.user)
-            self.notebook.add(self.materials_view, text="Material")
-            self.views.append(self.materials_view)
+            self._register_view("materials", "Material", "📦  Material", self.materials_view)
         else:
             self.materials_view = None
 
         self.analytics_view = AnalyticsView(self.notebook, self.db)
-        self.notebook.add(self.analytics_view, text="Auswertung")
-        self.views.append(self.analytics_view)
+        self._register_view("analytics", "Auswertung", "📊  Auswertung", self.analytics_view)
 
         show_locations = self.user.can_read("standorte") if self.user else True
         allow_edit_locations = self.user.can_write("standorte") if self.user else True
@@ -6213,12 +6359,47 @@ class MedizinprodukteApp(ttkb.Window):
             show_locations=show_locations,
             allow_edit_locations=allow_edit_locations,
         )
-        self.notebook.add(self.master_view, text="Stammdaten")
-        self.views.append(self.master_view)
+        self._register_view("masterdata", "Stammdaten", "🧱  Stammdaten", self.master_view)
 
-        self.notebook.bind("<<NotebookTabChanged>>", lambda _event: self.refresh_current())
+        self.notebook.bind("<<NotebookTabChanged>>", lambda _event: self._sync_sidebar_selection())
+
+        if self._nav_order:
+            self.sidebar.select(self._nav_order[0])
+            self.notebook.select(self._view_map[self._nav_order[0]])
 
         self.after(500, self._notify_upcoming_items)
+
+    def _register_view(
+        self,
+        key: str,
+        tab_label: str,
+        nav_label: str,
+        view: ttkb.Frame,
+    ) -> None:
+        self.notebook.add(view, text=tab_label)
+        self.views.append(view)
+        self._view_map[key] = view
+        self._nav_order.append(key)
+        self.sidebar.add_item(key, nav_label, lambda k=key: self._on_sidebar_select(k))
+
+    def _on_sidebar_select(self, key: str) -> None:
+        view = self._view_map.get(key)
+        if not view:
+            return
+        try:
+            index = self.notebook.index(view)
+        except tk.TclError:
+            return
+        self.notebook.select(index)
+        self.sidebar.select(key)
+
+    def _sync_sidebar_selection(self) -> None:
+        current = self.notebook.select()
+        for key, view in self._view_map.items():
+            if str(view) == current:
+                self.sidebar.select(key)
+                break
+        self.refresh_current()
 
     def _build_menubar(self) -> None:
         menubar = tk.Menu(self)
@@ -6492,9 +6673,19 @@ class MedizinprodukteApp(ttkb.Window):
     def _setup_styles(self) -> None:
         card_fg = "#f8fafc" if self.current_theme in self._dark_themes() else "#1f2937"
         accent = "#6366f1" if self.current_theme in self._dark_themes() else "#2563eb"
+        sidebar_bg = "#0f172a" if self.current_theme in self._dark_themes() else "#f1f5f9"
+        sidebar_fg = "#f8fafc" if self.current_theme in self._dark_themes() else "#0f172a"
         self.style.configure("KpiCard.TFrame", borderwidth=1, relief="ridge")
         self.style.configure("KpiTitle.TLabel", foreground=accent, font=("Inter", 11, "bold"))
         self.style.configure("KpiValue.TLabel", foreground=card_fg, font=("Inter", 26, "bold"))
+        self.style.configure("Sidebar.TFrame", background=sidebar_bg)
+        self.style.configure("SidebarInner.TFrame", background=sidebar_bg)
+        self.style.configure(
+            "SidebarHeading.TLabel",
+            background=sidebar_bg,
+            foreground=sidebar_fg,
+            font=("Inter", 11, "bold"),
+        )
 
     def _configure_base_fonts(self) -> None:
         base_size = 16
