@@ -21,10 +21,25 @@ from ttkbootstrap.widgets import DateEntry
 from ttkbootstrap.widgets.tableview import Tableview
 
 from app.database import (
+    AUSSCHEIDUNGSGRUND_VORSCHLAEGE,
+    BEZIRKSSTELLEN_DATEN,
+    BEZIRKSSTELLEN_VORSCHLAEGE,
+    BEZIRKSSTELLE_TO_BEZIRK,
+    BEZIRK_TO_BEREICH,
+    BEREICH_VORSCHLAEGE,
+    BEZIRK_VORSCHLAEGE,
     DatabaseManager,
+    FAHRZEUG_KATEGORIEN,
+    HERSTELLER_VORSCHLAEGE,
+    KOMPONENTEN_VORSCHLAEGE,
+    LAND_VORSCHLAEGE,
+    MATERIAL_VORSCHLAEGE,
     PERMISSION_COLUMNS,
     PERMISSION_DEFAULTS,
     PERMISSION_MODULES,
+    PRODUKT_VORSCHLAEGE,
+    REPARATUR_DATEI_KATEGORIEN,
+    TYP_MODELL_VORSCHLAEGE,
     User,
 )
 
@@ -46,6 +61,10 @@ STATUS_OPTIONS: List[Tuple[str, str]] = [
 ]
 STATUS_LABEL_TO_VALUE = {label: value for label, value in STATUS_OPTIONS}
 STATUS_VALUE_TO_LABEL = {value: label for label, value in STATUS_OPTIONS}
+
+BEZIRKSSTELLEN_INFO: Dict[str, Dict[str, str]] = {
+    entry["name"]: entry for entry in BEZIRKSSTELLEN_DATEN
+}
 
 
 def parse_date(value: str) -> Optional[date]:
@@ -124,6 +143,56 @@ class IdentifierCombobox(ttkb.Combobox):
         self.set(suggestion)
         self.icursor(len(typed))
         self.select_range(len(typed), tk.END)
+
+
+class SearchableCombobox(ttkb.Combobox):
+    """Combobox that filters its value list while the user types."""
+
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        values: Optional[Iterable[str]] = None,
+        match_mode: str = "contains",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(master, values=list(values or ()), **kwargs)
+        self._base_values: List[str] = list(values or ())
+        self.match_mode = match_mode
+        self.bind("<KeyRelease>", self._on_key_release, add="+")
+
+    def set_completion_list(self, values: Iterable[str]) -> None:
+        self._base_values = list(values or ())
+        self.configure(values=self._base_values)
+
+    def _matches(self, item: str, typed: str) -> bool:
+        haystack = item.lower()
+        needle = typed.lower()
+        if self.match_mode == "prefix":
+            return haystack.startswith(needle)
+        return needle in haystack
+
+    def _on_key_release(self, event: tk.Event) -> None:  # type: ignore[override]
+        if event.keysym in {
+            "BackSpace",
+            "Left",
+            "Right",
+            "Up",
+            "Down",
+            "Home",
+            "End",
+            "Return",
+            "Tab",
+            "Escape",
+        }:
+            return
+
+        typed = self.get()
+        if not typed:
+            self.configure(values=self._base_values)
+            return
+        matches = [value for value in self._base_values if self._matches(value, typed)]
+        self.configure(values=matches or self._base_values)
 
 
 class NavigationSidebar(ttkb.Frame):
@@ -531,15 +600,15 @@ class ProductsView(ttkb.Frame):
 
         ttkb.Label(filter_frame, text="Standort:").grid(row=0, column=0, sticky=W, pady=5)
         self.location_filter_var = ttkb.StringVar(value="Alle")
-        self.location_filter_box = ttkb.Combobox(
+        self.location_filter_box = SearchableCombobox(
             filter_frame,
             textvariable=self.location_filter_var,
-            state="readonly",
             width=30,
             values=list(self._location_filter_map.keys()),
         )
         self.location_filter_box.grid(row=0, column=1, sticky=W, padx=(0, 15))
         self.location_filter_box.bind("<<ComboboxSelected>>", lambda _event: self.refresh())
+        self.location_filter_box.set_completion_list(list(self._location_filter_map.keys()))
 
         ttkb.Label(filter_frame, text="Kategorie:").grid(row=0, column=2, sticky=W, pady=5)
         self.category_filter_var = ttkb.StringVar(value="Alle")
@@ -736,6 +805,7 @@ class ProductsView(ttkb.Frame):
         previous_location = self.location_filter_var.get()
         self._location_filter_map = location_map
         self.location_filter_box.configure(values=list(location_map.keys()))
+        self.location_filter_box.set_completion_list(list(location_map.keys()))
         if previous_location in location_map:
             self.location_filter_var.set(previous_location)
         else:
@@ -842,7 +912,8 @@ class ProductsView(ttkb.Frame):
             return
         if not self._ensure_write_for_product(product_id):
             return
-        dialog = RetireProductDialog(self)
+        reasons = [row["name"] for row in self.db.list_retirement_reasons()]
+        dialog = RetireProductDialog(self, reasons)
         self.wait_window(dialog)
         if not dialog.result:
             return
@@ -1657,6 +1728,11 @@ class MasterDataView(ttkb.Frame):
         self.upload_categories_frame = UploadCategoriesFrame(self.content, db)
         self._register_section("upload_categories", support_group, "Upload-Kategorien", self.upload_categories_frame)
 
+        self.retirement_reasons_frame = RetirementReasonsFrame(self.content, db)
+        self._register_section(
+            "retirement_reasons", product_group, "Ausscheidungsgründe", self.retirement_reasons_frame
+        )
+
         self.material_names_frame = MaterialNamesFrame(self.content, db)
         self._register_section("material_names", general, "Materialbezeichnungen", self.material_names_frame)
 
@@ -1784,6 +1860,7 @@ class LocationsFrame(ttkb.Frame):
             ("Bezirk", "bezirk"),
             ("Bezirksstelle", "bezirksstelle"),
             ("Ortsstelle", "ortsstelle"),
+            ("Funkkennung", "funkkennung"),
         ]
         for column, (label_text, data_key) in enumerate(filter_config):
             ttkb.Label(filter_frame, text=label_text).grid(row=0, column=column, sticky=W, padx=5, pady=(5, 2))
@@ -1800,6 +1877,8 @@ class LocationsFrame(ttkb.Frame):
             {"text": "Bezirk"},
             {"text": "Bezirksstelle"},
             {"text": "Ortsstelle"},
+            {"text": "Fahrzeug?"},
+            {"text": "Funkkennung"},
         ]
         self.table = Tableview(self, coldata=columns, rowdata=[], pagesize=20)
         self.table.pack(fill=BOTH, expand=True, padx=10, pady=10)
@@ -1825,6 +1904,8 @@ class LocationsFrame(ttkb.Frame):
                 "bezirk": row["bezirk"],
                 "bezirksstelle": row["bezirksstelle"],
                 "ortsstelle": row["ortsstelle"],
+                "ist_fahrzeug": bool(row["ist_fahrzeug"]),
+                "funkkennung": row["funkkennung"],
             }
             for row in self.db.list_locations()
         ]
@@ -1860,18 +1941,29 @@ class LocationsFrame(ttkb.Frame):
                     row["bezirk"] or "",
                     row["bezirksstelle"] or "",
                     row["ortsstelle"] or "",
+                    "Ja" if row.get("ist_fahrzeug") else "Nein",
+                    row.get("funkkennung") or "",
                 )
             )
 
     def add_location(self) -> None:
         if not self._require_write():
             return
-        fields = ["Land", "Bereich", "Bezirk", "Bezirksstelle", "Ortsstelle", "Beschreibung"]
-        dialog = SimpleEntryDialog(self, "Neuer Standort", fields)
+        templates = [dict(row) for row in self.db.list_locations()]
+        dialog = LocationDialog(self, templates=templates)
         self.wait_window(dialog)
         if dialog.result:
-            land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung = dialog.result
-            self.db.add_location(land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung)
+            data = dialog.result
+            self.db.add_location(
+                data["land"],
+                data["bereich"],
+                data["bezirk"],
+                data["bezirksstelle"],
+                data["ortsstelle"],
+                data["beschreibung"],
+                ist_fahrzeug=data["ist_fahrzeug"],
+                funkkennung=data["funkkennung"],
+            )
             self.refresh()
 
     def edit_location(self) -> None:
@@ -1884,28 +1976,22 @@ class LocationsFrame(ttkb.Frame):
         if not row:
             Messagebox.show_error("Standort nicht gefunden", "Fehler")
             return
-        fields = ["Land", "Bereich", "Bezirk", "Bezirksstelle", "Ortsstelle", "Beschreibung"]
-        initial = [
-            row["land"] or "",
-            row["bereich"] or "",
-            row["bezirk"] or "",
-            row["bezirksstelle"] or "",
-            row["ortsstelle"] or "",
-            row["beschreibung"] or "",
-        ]
-        dialog = SimpleEntryDialog(self, "Standort bearbeiten", fields, initial)
+        templates = [dict(entry) for entry in self.db.list_locations()]
+        dialog = LocationDialog(self, data=row, templates=templates)
         self.wait_window(dialog)
         if not dialog.result:
             return
-        land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung = dialog.result
+        data = dialog.result
         self.db.update_location(
             location_id,
-            land,
-            bereich,
-            bezirk,
-            bezirksstelle,
-            ortsstelle,
-            beschreibung,
+            data["land"],
+            data["bereich"],
+            data["bezirk"],
+            data["bezirksstelle"],
+            data["ortsstelle"],
+            data["beschreibung"],
+            ist_fahrzeug=data["ist_fahrzeug"],
+            funkkennung=data["funkkennung"],
         )
         self.refresh()
 
@@ -2051,6 +2137,7 @@ class SimpleLookupFrame(ttkb.Frame):
         title: str,
         column_key: str = "name",
         label: str = "Name",
+        suggestions: Optional[Sequence[str]] = None,
     ) -> None:
         super().__init__(master)
         self.db = db
@@ -2059,11 +2146,32 @@ class SimpleLookupFrame(ttkb.Frame):
         self.delete_fn = delete_fn
         self.column_key = column_key
         self.label = label
+        self._suggestions: List[str] = list(dict.fromkeys(suggestions or []))
 
         toolbar = ttkb.Frame(self)
         toolbar.pack(fill=tk.X, padx=10, pady=10)
         ttkb.Button(toolbar, text=f"Neu", command=self.add_entry, bootstyle="success").pack(side=LEFT)
         ttkb.Button(toolbar, text="Löschen", command=self.delete_entry, bootstyle="danger").pack(side=LEFT, padx=5)
+
+        if self._suggestions:
+            suggestion_frame = ttkb.Frame(self)
+            suggestion_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+            ttkb.Label(suggestion_frame, text=f"{label}-Vorschläge").pack(side=LEFT)
+            self.suggestion_var = ttkb.StringVar()
+            self.suggestion_box = SearchableCombobox(
+                suggestion_frame,
+                textvariable=self.suggestion_var,
+                values=self._suggestions,
+                width=40,
+            )
+            self.suggestion_box.pack(side=LEFT, padx=(8, 8))
+            self.suggestion_box.set_completion_list(self._suggestions)
+            ttkb.Button(
+                suggestion_frame,
+                text="Übernehmen",
+                command=self.add_selected_suggestion,
+                bootstyle="primary",
+            ).pack(side=LEFT)
 
         columns = [
             {"text": "ID"},
@@ -2077,6 +2185,20 @@ class SimpleLookupFrame(ttkb.Frame):
         for row in self.fetch_fn():
             value = row[self.column_key] if self.column_key in row.keys() else ""
             self.table.insert_row(values=(row["id"], value))
+
+    def add_selected_suggestion(self) -> None:
+        value = getattr(self, "suggestion_var", ttkb.StringVar()).get().strip()
+        if not value:
+            Messagebox.show_warning(f"Bitte einen {self.label} auswählen", "Hinweis")
+            return
+        try:
+            self.add_fn(value)
+        except sqlite3.IntegrityError as exc:
+            Messagebox.show_error(str(exc), "Fehler")
+            return
+        self.refresh()
+        if hasattr(self, "suggestion_var"):
+            self.suggestion_var.set("")
 
     def selected_id(self) -> Optional[int]:
         rows = self.table.get_rows("selected")
@@ -2125,6 +2247,7 @@ class ProductTypesFrame(SimpleLookupFrame):
             title="Produkttypen",
             column_key="name",
             label="Produkttyp",
+            suggestions=PRODUKT_VORSCHLAEGE,
         )
 
 
@@ -2139,6 +2262,7 @@ class ComponentTypesFrame(SimpleLookupFrame):
             title="Komponententypen",
             column_key="name",
             label="Komponententyp",
+            suggestions=KOMPONENTEN_VORSCHLAEGE,
         )
 
 
@@ -2170,6 +2294,21 @@ class RepairTypesFrame(SimpleLookupFrame):
         )
 
 
+class RetirementReasonsFrame(SimpleLookupFrame):
+    def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
+        super().__init__(
+            master,
+            db,
+            fetch_fn=db.list_retirement_reasons,
+            add_fn=db.add_retirement_reason,
+            delete_fn=db.delete_retirement_reason,
+            title="Ausscheidungsgründe",
+            column_key="name",
+            label="Grund",
+            suggestions=AUSSCHEIDUNGSGRUND_VORSCHLAEGE,
+        )
+
+
 class UploadCategoriesFrame(SimpleLookupFrame):
     def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
         super().__init__(
@@ -2181,6 +2320,7 @@ class UploadCategoriesFrame(SimpleLookupFrame):
             title="Upload-Kategorien",
             column_key="name",
             label="Kategorie",
+            suggestions=REPARATUR_DATEI_KATEGORIEN,
         )
 
 
@@ -2195,6 +2335,7 @@ class MaterialNamesFrame(SimpleLookupFrame):
             title="Materialbezeichnungen",
             column_key="name",
             label="Bezeichnung",
+            suggestions=MATERIAL_VORSCHLAEGE,
         )
 
 
@@ -2223,6 +2364,7 @@ class VehicleCategoriesFrame(SimpleLookupFrame):
             title="Fahrzeugkategorien",
             column_key="name",
             label="Kategorie",
+            suggestions=FAHRZEUG_KATEGORIEN,
         )
 
 
@@ -2292,6 +2434,7 @@ class ProductManufacturersFrame(SimpleLookupFrame):
             title="Hersteller",
             column_key="name",
             label="Hersteller",
+            suggestions=HERSTELLER_VORSCHLAEGE,
         )
 
 
@@ -2517,6 +2660,226 @@ class SimpleEntryDialog(ttkb.Toplevel):
         self.destroy()
 
 
+class LocationDialog(ttkb.Toplevel):
+    def __init__(
+        self,
+        master: tk.Misc,
+        data: Optional[sqlite3.Row] = None,
+        *,
+        templates: Optional[Sequence[Dict[str, Any]]] = None,
+    ) -> None:
+        super().__init__(master)
+        self.title("Standort")
+        self.resizable(False, False)
+        self.result: Optional[Dict[str, Any]] = None
+        self._template_map: Dict[str, Dict[str, Any]] = {}
+
+        container = ttkb.Frame(self, padding=20)
+        container.pack(fill=BOTH, expand=True)
+
+        default_land = data["land"] if data and data["land"] else LAND_VORSCHLAEGE[0]
+        self.land_var = ttkb.StringVar(value=default_land)
+        self.bereich_var = ttkb.StringVar(value=(data["bereich"] if data else ""))
+        self.bezirk_var = ttkb.StringVar(value=(data["bezirk"] if data else ""))
+        self.bezirksstelle_var = ttkb.StringVar(value=(data["bezirksstelle"] if data else ""))
+        self.ortsstelle_var = ttkb.StringVar(value=(data["ortsstelle"] if data else ""))
+        self.funkkennung_var = ttkb.StringVar(value=(data["funkkennung"] if data else ""))
+        self.is_vehicle_var = ttkb.BooleanVar(value=bool(data["ist_fahrzeug"]) if data else False)
+
+        templates = templates or []
+        if templates:
+            template_labels: List[str] = []
+            for entry in templates:
+                label = self._format_template(entry)
+                if label:
+                    template_labels.append(label)
+                    self._template_map[label] = entry
+            if template_labels:
+                ttkb.Label(container, text="Bekannter Standort").grid(row=0, column=0, sticky=W, pady=5)
+                self.template_var = ttkb.StringVar()
+                self.template_box = SearchableCombobox(
+                    container,
+                    textvariable=self.template_var,
+                    values=template_labels,
+                    width=32,
+                    match_mode="contains",
+                )
+                self.template_box.grid(row=0, column=1, sticky=W)
+                self.template_box.set_completion_list(template_labels)
+                self.template_box.bind("<<ComboboxSelected>>", self._on_template_selected)
+
+        base_row = 1 if templates else 0
+
+        ttkb.Label(container, text="Land").grid(row=base_row, column=0, sticky=W, pady=5)
+        self.land_box = SearchableCombobox(
+            container,
+            textvariable=self.land_var,
+            values=LAND_VORSCHLAEGE,
+            width=32,
+            match_mode="prefix",
+        )
+        self.land_box.grid(row=base_row, column=1, sticky=W)
+        self.land_box.set_completion_list(LAND_VORSCHLAEGE)
+
+        ttkb.Label(container, text="Bereich").grid(row=base_row + 1, column=0, sticky=W, pady=5)
+        self.bereich_box = SearchableCombobox(
+            container,
+            textvariable=self.bereich_var,
+            values=BEREICH_VORSCHLAEGE,
+            width=32,
+            match_mode="prefix",
+        )
+        self.bereich_box.grid(row=base_row + 1, column=1, sticky=W)
+        self.bereich_box.set_completion_list(BEREICH_VORSCHLAEGE)
+        self.bereich_var.trace_add("write", lambda *_: self._refresh_bezirk_choices())
+
+        ttkb.Label(container, text="Bezirk").grid(row=base_row + 2, column=0, sticky=W, pady=5)
+        self.bezirk_box = SearchableCombobox(
+            container,
+            textvariable=self.bezirk_var,
+            values=self._bezirk_choices(self.bereich_var.get()),
+            width=32,
+        )
+        self.bezirk_box.grid(row=base_row + 2, column=1, sticky=W)
+        self.bezirk_box.set_completion_list(self._bezirk_choices(self.bereich_var.get()))
+
+        ttkb.Label(container, text="Bezirksstelle").grid(row=base_row + 3, column=0, sticky=W, pady=5)
+        self.bezirksstelle_box = SearchableCombobox(
+            container,
+            textvariable=self.bezirksstelle_var,
+            values=BEZIRKSSTELLEN_VORSCHLAEGE,
+            width=32,
+        )
+        self.bezirksstelle_box.grid(row=base_row + 3, column=1, sticky=W)
+        self.bezirksstelle_box.set_completion_list(BEZIRKSSTELLEN_VORSCHLAEGE)
+        self.bezirksstelle_box.bind("<<ComboboxSelected>>", self._on_bezirksstelle_selected)
+
+        ttkb.Label(container, text="Ortsstelle").grid(row=base_row + 4, column=0, sticky=W, pady=5)
+        ttkb.Entry(container, textvariable=self.ortsstelle_var, width=34).grid(
+            row=base_row + 4, column=1, sticky=W
+        )
+
+        ttkb.Label(container, text="Beschreibung").grid(row=base_row + 5, column=0, sticky=W, pady=5)
+        self.description_text = tk.Text(container, width=32, height=4, wrap="word")
+        self.description_text.grid(row=base_row + 5, column=1, sticky=W)
+        if data and data["beschreibung"]:
+            self.description_text.insert(tk.END, data["beschreibung"])
+
+        vehicle_frame = ttkb.Frame(container)
+        vehicle_frame.grid(row=base_row + 6, column=0, columnspan=2, sticky=tk.W, pady=(10, 0))
+        ttkb.Checkbutton(
+            vehicle_frame,
+            text="Standort ist Fahrzeug",
+            variable=self.is_vehicle_var,
+            command=self._toggle_vehicle_fields,
+            bootstyle="round-toggle",
+        ).grid(row=0, column=0, sticky=tk.W)
+
+        ttkb.Label(vehicle_frame, text="Funkkennung").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.funkkennung_entry = ttkb.Entry(vehicle_frame, textvariable=self.funkkennung_var, width=28)
+        self.funkkennung_entry.grid(row=1, column=1, sticky=tk.W, padx=(10, 0))
+
+        button_frame = ttkb.Frame(container)
+        button_frame.grid(row=base_row + 7, column=0, columnspan=2, pady=(20, 0))
+        ttkb.Button(button_frame, text="Speichern", command=self._on_save, bootstyle="success").pack(side=LEFT, padx=5)
+        ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(side=LEFT, padx=5)
+
+        self._toggle_vehicle_fields()
+        self.grab_set()
+
+    def _bezirk_choices(self, bereich: str) -> List[str]:
+        if not bereich:
+            return BEZIRK_VORSCHLAEGE
+        return [bezirk for bezirk, area in BEZIRK_TO_BEREICH.items() if area == bereich]
+
+    def _refresh_bezirk_choices(self) -> None:
+        options = self._bezirk_choices(self.bereich_var.get().strip())
+        self.bezirk_box.set_completion_list(options)
+        if self.bezirk_var.get() and self.bezirk_var.get() not in options:
+            self.bezirk_var.set(options[0] if options else "")
+
+    def _toggle_vehicle_fields(self) -> None:
+        state = tk.NORMAL if self.is_vehicle_var.get() else tk.DISABLED
+        self.funkkennung_entry.configure(state=state)
+        if state == tk.DISABLED:
+            self.funkkennung_var.set("")
+
+    def _format_template(self, entry: Dict[str, Any]) -> str:
+        parts = [
+            entry.get("land") or "",
+            entry.get("bereich") or "",
+            entry.get("bezirk") or "",
+            entry.get("bezirksstelle") or "",
+            entry.get("ortsstelle") or "",
+        ]
+        label = " / ".join([part for part in parts if part])
+        if entry.get("ist_fahrzeug") and entry.get("funkkennung"):
+            label = f"{label} ({entry['funkkennung']})" if label else entry["funkkennung"]
+        return label
+
+    def _on_template_selected(self, _event: tk.Event) -> None:  # type: ignore[override]
+        label = getattr(self, "template_var", ttkb.StringVar()).get()
+        template = self._template_map.get(label)
+        if not template:
+            return
+        self._apply_template(template)
+
+    def _apply_template(self, template: Dict[str, Any]) -> None:
+        self.land_var.set(template.get("land", LAND_VORSCHLAEGE[0]))
+        self.bereich_var.set(template.get("bereich", ""))
+        self._refresh_bezirk_choices()
+        self.bezirk_var.set(template.get("bezirk", ""))
+        self.bezirksstelle_var.set(template.get("bezirksstelle", ""))
+        self.ortsstelle_var.set(template.get("ortsstelle", ""))
+        self.description_text.delete("1.0", tk.END)
+        if template.get("beschreibung"):
+            self.description_text.insert(tk.END, template.get("beschreibung", ""))
+        self.is_vehicle_var.set(bool(template.get("ist_fahrzeug")))
+        self._toggle_vehicle_fields()
+        if self.is_vehicle_var.get():
+            self.funkkennung_var.set(template.get("funkkennung", ""))
+
+    def _on_bezirksstelle_selected(self, _event: tk.Event) -> None:  # type: ignore[override]
+        name = self.bezirksstelle_var.get().strip()
+        if not name:
+            return
+        info = BEZIRKSSTELLEN_INFO.get(name)
+        if info:
+            bezirk = BEZIRKSSTELLE_TO_BEZIRK.get(name, "")
+            bereich = BEZIRK_TO_BEREICH.get(bezirk, "")
+            if bereich:
+                self.bereich_var.set(bereich)
+            if bezirk:
+                self.bezirk_var.set(bezirk)
+            self._refresh_bezirk_choices()
+            self.description_text.delete("1.0", tk.END)
+            self.description_text.insert(tk.END, info.get("beschreibung", ""))
+
+    def _on_save(self) -> None:
+        land = self.land_var.get().strip() or LAND_VORSCHLAEGE[0]
+        bereich = self.bereich_var.get().strip()
+        bezirk = self.bezirk_var.get().strip()
+        bezirksstelle = self.bezirksstelle_var.get().strip()
+        ortsstelle = self.ortsstelle_var.get().strip()
+        beschreibung = self.description_text.get("1.0", tk.END).strip()
+        funkkennung = self.funkkennung_var.get().strip()
+
+        if self.is_vehicle_var.get() and not funkkennung:
+            Messagebox.show_warning("Bitte Funkkennung angeben oder Fahrzeug deaktivieren", "Hinweis")
+            return
+
+        self.result = {
+            "land": land,
+            "bereich": bereich,
+            "bezirk": bezirk,
+            "bezirksstelle": bezirksstelle,
+            "ortsstelle": ortsstelle,
+            "beschreibung": beschreibung,
+            "ist_fahrzeug": self.is_vehicle_var.get(),
+            "funkkennung": funkkennung,
+        }
+        self.destroy()
+
 class ContactDialog(ttkb.Toplevel):
     def __init__(self, master: tk.Misc, data: Optional[sqlite3.Row] = None) -> None:
         super().__init__(master)
@@ -2609,7 +2972,14 @@ class ProductModelDialog(ttkb.Toplevel):
 
         ttkb.Label(container, text="Modellname").grid(row=1, column=0, sticky=W, pady=5)
         self.name_var = ttkb.StringVar()
-        ttkb.Entry(container, textvariable=self.name_var, width=32).grid(row=1, column=1, sticky=W)
+        self.name_box = SearchableCombobox(
+            container,
+            textvariable=self.name_var,
+            values=TYP_MODELL_VORSCHLAEGE,
+            width=34,
+        )
+        self.name_box.grid(row=1, column=1, sticky=W)
+        self.name_box.set_completion_list(TYP_MODELL_VORSCHLAEGE)
 
         button_frame = ttkb.Frame(container)
         button_frame.grid(row=2, column=0, columnspan=2, pady=(20, 0))
@@ -3026,7 +3396,7 @@ class LocationPermissionDialog(ttkb.Toplevel):
         self.destroy()
 
 class RetireProductDialog(ttkb.Toplevel):
-    def __init__(self, master: tk.Misc) -> None:
+    def __init__(self, master: tk.Misc, reasons: Sequence[str]) -> None:
         super().__init__(master)
         self.title("Produkt ausscheiden")
         self.resizable(False, False)
@@ -3047,7 +3417,16 @@ class RetireProductDialog(ttkb.Toplevel):
 
         ttkb.Label(container, text="Grund").grid(row=1, column=0, sticky=W, pady=5)
         self.reason_var = ttkb.StringVar()
-        ttkb.Entry(container, textvariable=self.reason_var, width=40).grid(row=1, column=1, sticky=W)
+        self.reasons = list(reasons)
+        self.reason_box = SearchableCombobox(
+            container,
+            textvariable=self.reason_var,
+            values=self.reasons,
+            width=38,
+            match_mode="contains",
+        )
+        self.reason_box.grid(row=1, column=1, sticky=W)
+        self.reason_box.set_completion_list(self.reasons)
 
         ttkb.Button(container, text="Speichern", command=self.on_save, bootstyle="success").grid(
             row=2, column=0, pady=(20, 0)
@@ -3627,6 +4006,18 @@ class ProductEditor(LargeDialog):
         self.repair_types = db.list_repair_types()
         self.upload_categories = db.list_upload_categories()
 
+        self.location_label_map: Dict[str, int] = {
+            self._format_location(row): int(row["id"]) for row in self.locations
+        }
+        self.location_labels: List[str] = list(self.location_label_map.keys())
+
+        self.vehicle_label_map: Dict[str, int] = {
+            self._format_vehicle(row): int(row["id"])
+            for row in self.vehicles
+            if self._format_vehicle(row)
+        }
+        self.vehicle_labels: List[str] = [""] + list(self.vehicle_label_map.keys())
+
         self.model_index: Dict[int, List[Tuple[int, str]]] = {}
         for model in self.product_models:
             self.model_index.setdefault(model["typ_id"], []).append((model["id"], model["name"]))
@@ -3853,24 +4244,26 @@ class ProductEditor(LargeDialog):
         assignment_frame.pack(fill=BOTH, expand=True, padx=5, pady=5)
 
         ttkb.Label(assignment_frame, text="Standort*").grid(row=0, column=0, sticky=W, pady=4)
-        self.standort_box = ttkb.Combobox(
+        self.standort_box = SearchableCombobox(
             assignment_frame,
             textvariable=self.standort_var,
-            values=[self._format_location(row) for row in self.locations],
+            values=self.location_labels,
             width=45,
-            state="readonly",
+            match_mode="contains",
         )
         self.standort_box.grid(row=0, column=1, sticky=W)
+        self.standort_box.set_completion_list(self.location_labels)
 
         ttkb.Label(assignment_frame, text="Fahrzeug (Funkkennung)").grid(row=1, column=0, sticky=W, pady=4)
-        self.fahrzeug_box = ttkb.Combobox(
+        self.fahrzeug_box = SearchableCombobox(
             assignment_frame,
             textvariable=self.fahrzeug_var,
-            values=[self._format_vehicle(row) for row in self.vehicles],
+            values=self.vehicle_labels,
             width=45,
-            state="readonly",
+            match_mode="contains",
         )
         self.fahrzeug_box.grid(row=1, column=1, sticky=W)
+        self.fahrzeug_box.set_completion_list(self.vehicle_labels)
 
         ttkb.Label(assignment_frame, text="Lagerort").grid(row=2, column=0, sticky=W, pady=4)
         ttkb.Entry(assignment_frame, textvariable=self.lagerort_var, width=48).grid(
@@ -3909,8 +4302,8 @@ class ProductEditor(LargeDialog):
     def _format_vehicle(self, row: sqlite3.Row) -> str:
         if not row:
             return ""
-        label = row["name"]
-        if row.get("kennzeichen"):
+        label = row["name"] if "name" in row.keys() else ""
+        if "kennzeichen" in row.keys() and row["kennzeichen"]:
             label += f" [{row['kennzeichen']}]"
         return f"{label} (#{row['id']})"
 
@@ -3990,16 +4383,13 @@ class ProductEditor(LargeDialog):
         return None
 
     def _resolve_location(self, value: str) -> Optional[int]:
-        for row in self.locations:
-            if self._format_location(row) == value:
-                return row["id"]
-        return None
+        return self.location_label_map.get(value.strip())
 
     def _resolve_vehicle(self, value: str) -> Optional[int]:
-        for row in self.vehicles:
-            if self._format_vehicle(row) == value:
-                return row["id"]
-        return None
+        value = value.strip()
+        if not value:
+            return None
+        return self.vehicle_label_map.get(value)
 
     def load_data(self) -> None:
         if self.produkt_id is None:

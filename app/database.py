@@ -12,7 +12,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -26,6 +26,610 @@ STATUS_LABELS: Dict[str, str] = {
     "in_reparatur": "In Reparatur",
     "ausgeschieden": "Ausgeschieden",
 }
+
+
+BEREICH_BEZIRK_MAP: Dict[str, List[str]] = {
+    "Waldviertel": [
+        "Gmünd",
+        "Horn",
+        "Krems (Land)",
+        "Krems (Stadt)",
+        "Waidhofen an der Thaya",
+        "Zwettl",
+    ],
+    "Weinviertel": [
+        "Gänserndorf",
+        "Hollabrunn",
+        "Korneuburg",
+        "Mistelbach",
+    ],
+    "Mostviertel": [
+        "Amstetten",
+        "Lilienfeld",
+        "Melk",
+        "Scheibbs",
+        "St. Pölten (Land)",
+        "St. Pölten (Stadt)",
+        "Waidhofen an der Ybbs",
+    ],
+    "Industrieviertel": [
+        "Baden",
+        "Bruck an der Leitha",
+        "Mödling",
+        "Neunkirchen",
+        "Tulln",
+        "Wiener Neustadt (Land)",
+        "Wiener Neustadt (Stadt)",
+    ],
+    "Katastrophenhilfsdienst": ["Landesweit"],
+}
+
+BEZIRK_TO_BEREICH: Dict[str, str] = {
+    bezirk: bereich for bereich, bezirke in BEREICH_BEZIRK_MAP.items() for bezirk in bezirke
+}
+
+
+FAHRZEUG_KATEGORIEN: List[str] = [
+    "RTW-C",
+    "RTW",
+    "KTW",
+    "BKTW",
+    "NEF",
+    "BEL",
+    "MTF",
+    "KHD",
+    "Sonstiges",
+]
+
+PRODUKT_VORSCHLAEGE: List[str] = [
+    "Absaugeinheit",
+    "Beatmungsgerät",
+    "Blutzuckermessgerät",
+    "CO-Warngerät",
+    "Defibrillator",
+    "EKG-Monitor",
+    "Thermometer",
+    "Perfusor",
+    "Schaufeltrage",
+    "Spineboard",
+    "Tragsessel",
+    "Vakuummatratze",
+    "Videolaryngoskop",
+    "Zutragsessel",
+    "Blutdruckmanschette",
+    "Pulsoximeter",
+    "Fahrtrage",
+    "Druckminderer",
+    "Sauerstoffleitungen",
+    "Thoraxkompressionsgerät",
+    "Ultraschallgerät",
+    "Telefonie",
+    "Tablet",
+    "Pager",
+    "Funkgerät",
+    "Handfunkgerät",
+    "Handscheinwerfer",
+    "Feuerlöscher",
+    "SpO2-Sensor",
+    "SpCO-Sensor",
+    "Stammkabel",
+    "NIBP-Kabel",
+    "EKG-Kabel (4-adrig)",
+    "EKG-Kabel (6-adrig)",
+    "Kapnometrie-Sensor",
+    "Infusionsdruckmanschette",
+    "Temperatursonde",
+]
+
+MATERIAL_VORSCHLAEGE: List[str] = [
+    "Adenosin (Adenosin Hikma)",
+    "Amiodaron (Amiodaron Hameln)",
+    "Aspirin (Acetylsalicylsäure)",
+    "Atropin",
+    "Beloc (Metoprolol)",
+    "Bricanyl (Terbutalin)",
+    "Brilique (Ticagrelor)",
+    "Butylscopolamin (Butylscopolamin Kalceks)",
+    "Combivent (Salbutamol/Ipratropiumbromid)",
+    "Cormagnesin (Magnesiumsulfat)",
+    "Cyklokapron (Tranexamsäure)",
+    "Dibondrin (Diphenhydramin)",
+    "Dormicum (Midazolam)",
+    "Ebrantil (Urapidil)",
+    "Efient (Prasugrel)",
+    "EloMel Isoton (Infusion)",
+    "Ephedrin",
+    "Esketamin (Esketamin Kalceks)",
+    "Esmolol",
+    "Fentanyl",
+    "Flumazenil (Flumazenil Kabi)",
+    "Furon (Furosemid)",
+    "Glucose 33% (Infusion)",
+    "Glucose 5% (Infusion)",
+    "Gynipral (Hexoprenalinsulfat)",
+    "Heparin",
+    "Histakut (Dimetinden)",
+    "L-Adrenalin (Epinephrin 1:10.000)",
+    "Levetiracetam (Levetiracetam Hikma)",
+    "Lorazepam (Lorazepam Macure)",
+    "Metagelan (Metamizol)",
+    "Metalyse (Tenecteplase)",
+    "Metamizol (Metamizol Kalceks)",
+    "Mexalen (Paracetamol)",
+    "Midazolam",
+    "NaCl 0,9% (Infusion/Lösung)",
+    "NaCl 10% (Infusion)",
+    "Naloxon",
+    "Narcanti (Naloxon)",
+    "Nitro POHL (Nitroglycerin)",
+    "Nitrolingual (Nitroglycerin Spray)",
+    "Noradrenalin (Noradrenalin Kabi)",
+    "Nureflex (Ibuprofen)",
+    "Ondansetron (Ondansetron Accord)",
+    "Ondansetron (Ondansetron Hikma)",
+    "Pantoprazol (Pantoprazol Hikma)",
+    "Penthrop (Methoxyfluran)",
+    "Phenylephrin (Phenylephrin Aguettant)",
+    "Piritramid",
+    "Plavix (Clopidogrel)",
+    "Prednisolon Supp. (Rektodelt)",
+    "Prednisolut (Prednisolon)",
+    "Propofol",
+    "Pulmicort (Budesonid)",
+    "Rocuronium (Rocuroniumbromid Kabi)",
+    "Sedacoron (Amiodaron)",
+    "Sterofundin Iso (Infusion)",
+    "Stesolid (Diazepam Rektiole)",
+    "Sugagelan (Sugammadex)",
+    "Sultanol forte (Salbutamol)",
+    "Suprarenin (Epinephrin 1:1.000)",
+    "Syntocinon (Oxytocin)",
+    "Temesta (Lorazepam)",
+    "Terlipressin (Terlipressinacetat)",
+    "Theospirex (Theophyllin)",
+    "Tranexamsäure (Tranexamsäure Medicamentum)",
+    "Urapidil (Urapidil Kalceks)",
+    "Vendal (Morphin)",
+    "Wellion (Invertzucker)",
+    "Xylanaest Purum (Lidocain)",
+]
+
+HERSTELLER_VORSCHLAEGE: List[str] = [
+    "Weinmann",
+    "Corpuls",
+    "Dlouhy",
+    "Stryker",
+    "Ferno",
+    "Dräger",
+    "Bayer",
+    "Fresenius",
+    "Hikma",
+    "Gebro",
+    "Pfizer",
+    "Sanofi",
+    "Takeda",
+    "Astra",
+    "Ratiopharm",
+    "Accord",
+    "Ever Pharma",
+    "Lilly",
+    "Laerdal",
+    "RedVac",
+    "MedCaptain",
+    "B.Braun",
+    "Masimo",
+]
+
+TYP_MODELL_VORSCHLAEGE: List[Tuple[str, str]] = [
+    ("Medumat", "Standard 2"),
+    ("Accuvac", "Pro"),
+    ("Corpuls", "3"),
+    ("Lifepak", "CR2"),
+    ("PAC", "5500"),
+    ("PAC", "6500"),
+    ("Thermoscan", "PRO 6000"),
+    ("BaXstrap", "Standard"),
+    ("Ferno", "65 EXL"),
+    ("Stair-PRO", "Standard"),
+    ("RedVac", "Standard"),
+    ("MedCaptain", "VS-10S"),
+    ("Space", "Plus"),
+    ("Motorola", "MTP850"),
+    ("Motorola", "MTP850S"),
+    ("Motorola", "MTP3550"),
+    ("Motorola", "MTM8000"),
+    ("Masimo", "RD SET DB-I M4052"),
+]
+
+KOMPONENTEN_VORSCHLAEGE: List[str] = [
+    "Akku",
+    "Monitoreinheit",
+    "Patientenmodul",
+    "Therapiemodul",
+    "Fahrgestell",
+    "Aufliegefläche",
+]
+
+AUSSCHEIDUNGSGRUND_VORSCHLAEGE: List[str] = [
+    "Defekt (irreparabel)",
+    "Reparatur unwirtschaftlich",
+    "Technisch veraltet / End-of-Life",
+    "Ausgemustert (planmäßig)",
+    "Verlust",
+    "Diebstahl",
+    "Sonstiges",
+]
+
+REPARATUR_DATEI_KATEGORIEN: List[str] = [
+    "Prüfbericht",
+    "Reparaturbegleitschein",
+    "Rechnung",
+    "Versicherungsmeldung",
+    "Lieferschein",
+    "Kostenvoranschlag",
+    "Sonstiges",
+    "Fotos",
+]
+
+
+BEZIRKSSTELLEN_RAW = """
+Bezirksstelle ALLENTSTEIG
+Spitalstraße 16-20
+3804 Allentsteig
+Tel.: +43 59144 72400
+
+Bezirksstelle AMSTETTEN
+Krankenhausstraße 10
+3300 Amstetten
+Tel.: +43 59144 51000
+
+Bezirksstelle ATZENBRUGG-HEILIGENEICH
+Hütteldorfstraße 4
+3452 Heiligeneich
+Tel.: +43 59144 69400
+
+Bezirksstelle BADEN
+Rotes Kreuz Gasse 6
+2500 Baden
+Tel.: +43 59144 52000
+
+Bezirksstelle BRUCK AN DER LEITHA
+Höfleiner Straße 18
+2460 Bruck an der Leitha
+Tel.: +43 59144 53000
+
+Bezirksstelle BRUNN AM GEBIRGE
+Alexander Groß Gasse 71
+2345 Brunn am Gebirge
+Tel.: +43 59144 64400
+
+Bezirksstelle GÄNSERNDORF-MARCHEGG
+Henri Dunant Straße 1
+2230 Gänserndorf
+Tel.: +43 59144 54000
+
+Bezirksstelle GLOGGNITZ
+Semmeringstraße 87
+2640 Gloggnitz
+Tel.: +43 59144 65600
+
+Bezirksstelle GMÜND
+Weitraer Straße 54
+3950 Gmünd
+Tel.: +43 59144 55000
+
+Bezirksstelle GROSSWEIKERSDORF
+Schmidastraße 4
+3701 Großweikersdorf
+Tel.: +43 59144 69600
+
+Bezirksstelle HAAG
+Elisabethstraße 9
+3350 Haag
+Tel.: +43 59144 51600
+
+Bezirksstelle HAINBURG
+Rot-Kreuz-Straße 14
+2410 Hainburg an der Donau
+Tel.: +43 59144 53600
+
+Bezirksstelle HAINFELD
+Ramsauer Straße 17
+3170 Hainfeld
+Tel.: +43 59144 61400
+
+Bezirksstelle HERZOGENBURG
+Sankt Pöltner Straße 43
+3130 Herzogenburg
+Tel.: +43 59144 67400
+
+Bezirksstelle HOLLABRUNN
+Robert Löffler Straße 21/30
+2020 Hollabrunn
+Tel.: +43 59144 57000
+
+Bezirksstelle HORN
+Spitalgasse 10b
+3580 Horn
+Tel.: +43 59144 58000
+
+Bezirksstelle KIRCHSCHLAG
+Hofwiese 23
+2860 Kirchschlag
+Tel.: +43 59144 71000
+
+Bezirksstelle KLOSTERNEUBURG
+Kreutzergasse 11
+3400 Klosterneuburg
+Tel.: +43 59144 56000
+
+Bezirksstelle KORNEUBURG
+Jahnstraße 7
+2100 Korneuburg
+Tel.: +43 59144 59000
+
+Bezirksstelle KOTTINGBRUNN
+Dammgasse 1
+2542 Kottingbrunn
+Tel.: +43 59144 52600
+
+Bezirksstelle KREMS
+Mitterweg 11
+3500 Krems an der Donau
+Tel.: +43 59144 75000
+
+Bezirksstelle LAA AN DER THAYA
+Simon Scheiner Straße 14
+2136 Laa an der Thaya
+Tel.: +43 59144 63600
+
+Bezirksstelle LANGENLOIS
+Kamptalstraße 83
+3550 Langenlois
+Tel.: +43 59144 60000
+
+Bezirksstelle LITSCHAU
+Schulstraße 8
+3874 Litschau
+Tel.: +43 59144 55400
+
+Bezirksstelle MARCHFELD
+Freiherr von Smola-Straße 1/1
+2301 Groß-Enzersdorf
+Tel.: +43 59144 54500
+
+Bezirksstelle MELK
+Spielberger Straße 15
+3390 Melk
+Tel.: +43 59144 62000
+
+Bezirksstelle MISTELBACH
+Liechtensteinstraße 63
+2130 Mistelbach
+Tel.: +43 59144 63000
+
+Bezirksstelle MÖDLING
+Neusiedler Straße 20
+2340 Mödling
+Tel.: +43 59144 64000
+
+Bezirksstelle NEULENGBACH
+Hainfelder Straße 58
+3040 Neulengbach
+Tel.: +43 59144 67000
+
+Bezirksstelle NEUNKIRCHEN
+Rotkreuz-Straße 4
+2620 Neunkirchen
+Tel.: +43 59144 65000
+
+Bezirksstelle PERNITZ
+Peter Rosegger Straße 5
+2763 Pernitz
+Tel.: +43 59144 71400
+
+Bezirksstelle PÖGGSTALL
+Rogendorferstraße 5
+3650 Pöggstall
+Tel.: +43 59144 62600
+
+Bezirksstelle PURKERSDORF-GABLITZ
+Kaiser Josef-Straße 65
+3002 Purkersdorf
+Tel.: +43 59144 66000
+
+Bezirksstelle RETZ
+Jahnstraße 1
+2070 Retz
+Tel.: +43 59144 57400
+
+Bezirksstelle SCHEIBBS
+Rutesheimerstraße 3
+3270 Scheibbs
+Tel.: +43 59144 68000
+
+Bezirksstelle SCHWECHAT
+Bruck Hainburger-Straße 27
+2320 Schwechat
+Tel.: +43 59144 77000
+
+Bezirksstelle SOLLENAU-FELIXDORF
+Gutensteiner Straße 2
+2601 Sollenau
+Tel.: +43 59144 71600
+
+Bezirksstelle ST. PETER IN DER AU
+Burgholz 1
+3352 St. Peter in der Au
+Tel.: +43 59144 51800
+
+Bezirksstelle ST. PÖLTEN
+Dr. Theodor Körner-Straße 43
+3100 St. Pölten
+Tel.: +43 59144 73000
+
+Bezirksstelle ST. VALENTIN
+Neubaustraße 25
+4300 St. Valentin
+Tel.: +43 59144 51400
+
+Bezirksstelle TRAISENTAL
+Liese Prokop Straße 8
+3180 Lilienfeld
+Tel.: +43 59144 61000
+
+Bezirksstelle TRIESTINGTAL
+Leobersdorferstraße 56
+2560 Berndorf
+Tel.: +43 59144 52400
+
+Bezirksstelle TULLN
+Dr. Karl-Landsteiner-Straße 1
+3430 Tulln
+Tel.: +43 59144 69000
+
+Bezirksstelle WAIDHOFEN AN DER THAYA
+Moritz-Schadek-Gasse 30a
+3830 Waidhofen an der Thaya
+Tel.: +43 59144 70000
+
+Bezirksstelle WAIDHOFEN AN DER YBBS
+Pestalozzistraße 6
+3340 Waidhofen an der Ybbs
+Tel.: +43 59144 76000
+
+Bezirksstelle WEITRA
+Gmünder Straße 137
+3970 Weitra
+Tel.: +43 59144 55600
+
+Bezirksstelle WIENER NEUSTADT
+Grazer Straße 41
+2700 Wiener Neustadt
+Tel.: +43 59144 74000
+
+Bezirksstelle YBBS
+Ybbsflussstraße 1
+3370 Ybbs an der Donau
+Tel.: +43 59144 62400
+
+Bezirksstelle ZIERSDORF
+Erlenaugasse 28
+3710 Ziersdorf
+Tel.: +43 59144 57200
+
+Bezirksstelle ZISTERSDORF
+Windisch Baumgartner Straße 1
+2225 Zistersdorf
+Tel.: +43 59144 54600
+
+Bezirksstelle ZWETTL
+Propstei 45
+3910 Zwettl
+Tel.: +43 59144 72000
+"""
+
+
+def _parse_bezirksstellen(raw: str) -> List[Dict[str, str]]:
+    blocks: List[List[str]] = []
+    current: List[str] = []
+    for line in (raw or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if current:
+                blocks.append(current)
+                current = []
+            continue
+        current.append(stripped)
+    if current:
+        blocks.append(current)
+
+    entries: List[Dict[str, str]] = []
+    for block in blocks:
+        if len(block) < 3:
+            continue
+        title = block[0]
+        name = title.replace("Bezirksstelle", "").strip()
+        address_line = block[1]
+        city_line = block[2]
+        phone_line = block[3] if len(block) > 3 else ""
+        nice_name = name.title()
+        description_parts = [address_line, city_line]
+        if phone_line:
+            description_parts.append(phone_line)
+        entries.append(
+            {
+                "raw_name": name,
+                "name": nice_name,
+                "address": address_line,
+                "city": city_line,
+                "telefon": phone_line,
+                "beschreibung": "\n".join(description_parts),
+            }
+        )
+    return entries
+
+
+BEZIRKSSTELLEN_DATEN: List[Dict[str, str]] = _parse_bezirksstellen(BEZIRKSSTELLEN_RAW)
+BEZIRKSSTELLEN_VORSCHLAEGE: List[str] = [entry["name"] for entry in BEZIRKSSTELLEN_DATEN]
+
+BEZIRKSSTELLE_TO_BEZIRK: Dict[str, str] = {
+    "Allentsteig": "Zwettl",
+    "Amstetten": "Amstetten",
+    "Atzenbrugg-Heiligeneich": "Tulln",
+    "Baden": "Baden",
+    "Bruck An Der Leitha": "Bruck an der Leitha",
+    "Brunn Am Gebirge": "Mödling",
+    "Gänserndorf-Marchegg": "Gänserndorf",
+    "Gloggnitz": "Neunkirchen",
+    "Gmünd": "Gmünd",
+    "Grossweikersdorf": "Tulln",
+    "Haag": "Amstetten",
+    "Hainburg": "Bruck an der Leitha",
+    "Hainfeld": "Lilienfeld",
+    "Herzogenburg": "St. Pölten (Land)",
+    "Hollabrunn": "Hollabrunn",
+    "Horn": "Horn",
+    "Kirchschlag": "Wiener Neustadt (Land)",
+    "Klosterneuburg": "Tulln",
+    "Korneuburg": "Korneuburg",
+    "Kottingbrunn": "Baden",
+    "Krems": "Krems (Stadt)",
+    "Laa An Der Thaya": "Mistelbach",
+    "Langenlois": "Krems (Land)",
+    "Litschau": "Gmünd",
+    "Marchfeld": "Gänserndorf",
+    "Melk": "Melk",
+    "Mistelbach": "Mistelbach",
+    "Mödling": "Mödling",
+    "Neulengbach": "St. Pölten (Land)",
+    "Neunkirchen": "Neunkirchen",
+    "Pernitz": "Wiener Neustadt (Land)",
+    "Pöggstall": "Melk",
+    "Purkersdorf-Gablitz": "St. Pölten (Land)",
+    "Retz": "Hollabrunn",
+    "Scheibbs": "Scheibbs",
+    "Schwechat": "Bruck an der Leitha",
+    "Sollenau-Felixdorf": "Wiener Neustadt (Land)",
+    "St. Peter In Der Au": "Amstetten",
+    "St. Pölten": "St. Pölten (Stadt)",
+    "St. Valentin": "Amstetten",
+    "Traisental": "Lilienfeld",
+    "Triestingtal": "Baden",
+    "Tulln": "Tulln",
+    "Waidhofen An Der Thaya": "Waidhofen an der Thaya",
+    "Waidhofen An Der Ybbs": "Waidhofen an der Ybbs",
+    "Weitra": "Gmünd",
+    "Wiener Neustadt": "Wiener Neustadt (Stadt)",
+    "Ybbs": "Melk",
+    "Ziersdorf": "Hollabrunn",
+    "Zistersdorf": "Gänserndorf",
+    "Zwettl": "Zwettl",
+}
+
+LAND_VORSCHLAEGE: List[str] = ["Niederösterreich", "Österreich"]
+BEREICH_VORSCHLAEGE: List[str] = list(BEREICH_BEZIRK_MAP.keys())
+BEZIRK_VORSCHLAEGE: List[str] = sorted(BEZIRK_TO_BEREICH.keys())
 
 
 PERMISSION_MODULES: List[Tuple[str, str]] = [
@@ -196,6 +800,12 @@ class DatabaseManager:
                     name TEXT NOT NULL UNIQUE
                 );
 
+                CREATE TABLE IF NOT EXISTS ausscheidungsgruende (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    mandant_id INTEGER NOT NULL DEFAULT 1
+                );
+
                 CREATE TABLE IF NOT EXISTS standorte (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     land TEXT,
@@ -203,7 +813,10 @@ class DatabaseManager:
                     bezirk TEXT,
                     bezirksstelle TEXT,
                     ortsstelle TEXT,
-                    beschreibung TEXT
+                    beschreibung TEXT,
+                    ist_fahrzeug INTEGER NOT NULL DEFAULT 0,
+                    funkkennung TEXT,
+                    mandant_id INTEGER NOT NULL DEFAULT 1
                 );
 
                 CREATE TABLE IF NOT EXISTS kontakte (
@@ -590,6 +1203,9 @@ class DatabaseManager:
         self._ensure_column("fahrzeuge", "fahrzeugkategorie_id", "INTEGER REFERENCES fahrzeug_kategorien(id)")
         self._ensure_column("fahrzeuge", "fahrgestellnummer", "TEXT")
 
+        self._ensure_column("standorte", "ist_fahrzeug", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("standorte", "funkkennung", "TEXT")
+
         self._ensure_column("produkt_komponenten", "komponententyp_id", "INTEGER REFERENCES komponententypen(id)")
         self._ensure_column("reparaturen", "reparatur_art_id", "INTEGER REFERENCES reparatur_arten(id)")
 
@@ -638,6 +1254,7 @@ class DatabaseManager:
             "produkt_regelwerke",
             "hilfe_artikel",
             "cockpit_snapshots",
+            "ausscheidungsgruende",
         ):
             self._ensure_column(table, "mandant_id", "INTEGER NOT NULL DEFAULT 1")
 
@@ -682,38 +1299,75 @@ class DatabaseManager:
                         (hersteller_id, row["id"]),
                     )
 
+    def _seed_simple_list(
+        self,
+        table: str,
+        values: Iterable[str],
+        *,
+        column: str = "name",
+    ) -> None:
+        existing: Dict[str, None] = {
+            (row[0] or "").strip(): None
+            for row in self.connection.execute(f"SELECT {column} FROM {table}")
+            if (row[0] or "").strip()
+        }
+        for value in values:
+            trimmed = (value or "").strip()
+            if not trimmed or trimmed in existing:
+                continue
+            self.connection.execute(
+                f"INSERT INTO {table} ({column}) VALUES (?)",
+                (trimmed,),
+            )
+            existing[trimmed] = None
+
     def _seed_defaults(self) -> None:
         with self.connection:
-            existing = {
-                row[0]
-                for row in self.connection.execute("SELECT name FROM fahrzeug_kategorien")
+            existing_categories = {
+                row[0] for row in self.connection.execute("SELECT name FROM fahrzeug_kategorien")
             }
-            for eintrag in ["RTW-C", "RTW", "KTW", "BKTW", "NEF", "BEL", "MTF", "Sonstiges"]:
-                if eintrag not in existing:
+            for eintrag in FAHRZEUG_KATEGORIEN:
+                if eintrag not in existing_categories:
                     self.connection.execute(
                         "INSERT INTO fahrzeug_kategorien (name) VALUES (?)",
                         (eintrag,),
                     )
 
-            if not list(self.connection.execute("SELECT id FROM upload_kategorien")):
-                for name in ["Rechnung", "Bild", "Protokoll", "Sonstiges"]:
-                    self.connection.execute(
-                        "INSERT INTO upload_kategorien (name) VALUES (?)",
-                        (name,),
-                    )
+            self._seed_simple_list("upload_kategorien", REPARATUR_DATEI_KATEGORIEN)
+            self._seed_simple_list("reparatur_arten", ["Elektronik", "Mechanik", "Software", "Kalibrierung"])
+            self._seed_simple_list("wartungstypen", ["STK", "MTK", "Inspektion", "Kalibrierung"])
 
-            if not list(self.connection.execute("SELECT id FROM reparatur_arten")):
-                for name in ["Elektronik", "Mechanik", "Software", "Kalibrierung"]:
-                    self.connection.execute(
-                        "INSERT INTO reparatur_arten (name) VALUES (?)",
-                        (name,),
-                    )
+            self._seed_simple_list("produkt_typen", PRODUKT_VORSCHLAEGE)
+            self._seed_simple_list("produkt_hersteller", HERSTELLER_VORSCHLAEGE)
+            self._seed_simple_list("komponententypen", KOMPONENTEN_VORSCHLAEGE)
+            self._seed_simple_list("material_bezeichnungen", MATERIAL_VORSCHLAEGE)
+            self._seed_simple_list("ausscheidungsgruende", AUSSCHEIDUNGSGRUND_VORSCHLAEGE)
 
-            if not list(self.connection.execute("SELECT id FROM wartungstypen")):
-                for name in ["STK", "MTK", "Inspektion", "Kalibrierung"]:
+            typ_index: Dict[str, int] = {
+                row["name"]: int(row["id"])
+                for row in self.connection.execute("SELECT id, name FROM produkt_typen")
+            }
+            for typ_name, modell_name in TYP_MODELL_VORSCHLAEGE:
+                trimmed_type = typ_name.strip()
+                trimmed_model = modell_name.strip()
+                if not trimmed_type or not trimmed_model:
+                    continue
+                typ_id = typ_index.get(trimmed_type)
+                if not typ_id:
+                    cur = self.connection.execute(
+                        "INSERT INTO produkt_typen (name) VALUES (?)",
+                        (trimmed_type,),
+                    )
+                    typ_id = int(cur.lastrowid)
+                    typ_index[trimmed_type] = typ_id
+                exists = self.connection.execute(
+                    "SELECT 1 FROM produkt_modelle WHERE typ_id = ? AND name = ?",
+                    (typ_id, trimmed_model),
+                ).fetchone()
+                if not exists:
                     self.connection.execute(
-                        "INSERT INTO wartungstypen (name) VALUES (?)",
-                        (name,),
+                        "INSERT INTO produkt_modelle (typ_id, name) VALUES (?, ?)",
+                        (typ_id, trimmed_model),
                     )
 
             if not list(self.connection.execute("SELECT id FROM regelwerke")):
@@ -767,51 +1421,58 @@ class DatabaseManager:
                         (bereich, titel, inhalt),
                     )
 
-            if not list(self.connection.execute("SELECT id FROM standorte")):
-                bereichs_map = {
-                    "Waldviertel": [
-                        "Gmünd",
-                        "Horn",
-                        "Krems (Land)",
-                        "Krems (Stadt)",
-                        "Waidhofen an der Thaya",
-                        "Zwettl",
-                    ],
-                    "Weinviertel": [
-                        "Gänserndorf",
-                        "Hollabrunn",
-                        "Korneuburg",
-                        "Mistelbach",
-                    ],
-                    "Mostviertel": [
-                        "Amstetten",
-                        "Lilienfeld",
-                        "Melk",
-                        "Scheibbs",
-                        "St. Pölten (Land)",
-                        "St. Pölten (Stadt)",
-                        "Waidhofen an der Ybbs",
-                    ],
-                    "Industrieviertel": [
-                        "Baden",
-                        "Bruck an der Leitha",
-                        "Mödling",
-                        "Neunkirchen",
-                        "Tulln",
-                        "Wiener Neustadt (Land)",
-                        "Wiener Neustadt (Stadt)",
-                    ],
-                    "Katastrophenhilfsdienst": ["Landesweit"],
-                }
-                for bereich, bezirke in bereichs_map.items():
-                    for bezirk in bezirke:
-                        self.connection.execute(
-                            """
-                            INSERT INTO standorte (land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                            """,
-                            ("Niederösterreich", bereich, bezirk, "", "", ""),
+            existing_locations = {
+                (
+                    row["land"],
+                    row["bereich"],
+                    row["bezirk"],
+                    row["bezirksstelle"],
+                    row["ortsstelle"],
+                )
+                for row in self.connection.execute(
+                    "SELECT land, bereich, bezirk, bezirksstelle, ortsstelle FROM standorte"
+                )
+            }
+            for bereich, bezirke in BEREICH_BEZIRK_MAP.items():
+                for bezirk in bezirke:
+                    key = ("Niederösterreich", bereich, bezirk, "", "")
+                    if key in existing_locations:
+                        continue
+                    self.connection.execute(
+                        """
+                        INSERT INTO standorte (
+                            land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung
                         )
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        ("Niederösterreich", bereich, bezirk, "", "", ""),
+                    )
+                    existing_locations.add(key)
+
+            for entry in BEZIRKSSTELLEN_DATEN:
+                name = entry["name"]
+                bezirk = BEZIRKSSTELLE_TO_BEZIRK.get(name, name)
+                bereich = BEZIRK_TO_BEREICH.get(bezirk, "")
+                key = ("Niederösterreich", bereich, bezirk, name, "")
+                if key in existing_locations:
+                    continue
+                self.connection.execute(
+                    """
+                    INSERT INTO standorte (
+                        land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "Niederösterreich",
+                        bereich,
+                        bezirk,
+                        name,
+                        "",
+                        entry["beschreibung"],
+                    ),
+                )
+                existing_locations.add(key)
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         cur = self.connection.execute(f"PRAGMA table_info({table})")
@@ -828,7 +1489,13 @@ class DatabaseManager:
                 value = row[column]
                 if value:
                     parts.append(value)
-        return " / ".join(parts)
+        label = " / ".join(parts)
+        funk_key = f"{prefix}funkkennung" if prefix else "funkkennung"
+        if funk_key in row.keys():
+            funkkennung = row[funk_key]
+            if funkkennung:
+                label = f"{label} ({funkkennung})" if label else str(funkkennung)
+        return label
 
     def location_label(self, standort_id: Optional[int]) -> str:
         if not standort_id:
@@ -1091,6 +1758,29 @@ class DatabaseManager:
                 (typ_id,),
             )
 
+    def list_retirement_reasons(self) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                "SELECT * FROM ausscheidungsgruende WHERE mandant_id = ? ORDER BY name",
+                (self._active_mandant_id,),
+            )
+        )
+
+    def add_retirement_reason(self, name: str) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                "INSERT INTO ausscheidungsgruende (name, mandant_id) VALUES (?, ?)",
+                (name, self._active_mandant_id),
+            )
+            return int(cur.lastrowid)
+
+    def delete_retirement_reason(self, reason_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM ausscheidungsgruende WHERE id = ? AND mandant_id = ?",
+                (reason_id, self._active_mandant_id),
+            )
+
     def list_maintenance_types(self) -> List[sqlite3.Row]:
         return list(
             self.connection.execute("SELECT * FROM wartungstypen ORDER BY name")
@@ -1281,14 +1971,17 @@ class DatabaseManager:
         bezirksstelle: str,
         ortsstelle: str,
         beschreibung: str,
+        *,
+        ist_fahrzeug: bool = False,
+        funkkennung: str = "",
     ) -> int:
         with self.connection:
             cur = self.connection.execute(
                 """
                 INSERT INTO standorte (
-                    land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung, mandant_id
+                    land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung, ist_fahrzeug, funkkennung, mandant_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     land,
@@ -1297,6 +1990,8 @@ class DatabaseManager:
                     bezirksstelle,
                     ortsstelle,
                     beschreibung,
+                    1 if ist_fahrzeug else 0,
+                    funkkennung.strip() or None,
                     self._active_mandant_id,
                 ),
             )
@@ -1318,12 +2013,16 @@ class DatabaseManager:
         bezirksstelle: str,
         ortsstelle: str,
         beschreibung: str,
+        *,
+        ist_fahrzeug: bool = False,
+        funkkennung: str = "",
     ) -> None:
         with self.connection:
             self.connection.execute(
                 """
                 UPDATE standorte
-                SET land = ?, bereich = ?, bezirk = ?, bezirksstelle = ?, ortsstelle = ?, beschreibung = ?
+                SET land = ?, bereich = ?, bezirk = ?, bezirksstelle = ?, ortsstelle = ?, beschreibung = ?,
+                    ist_fahrzeug = ?, funkkennung = ?
                 WHERE id = ? AND mandant_id = ?
                 """,
                 (
@@ -1333,6 +2032,8 @@ class DatabaseManager:
                     bezirksstelle,
                     ortsstelle,
                     beschreibung,
+                    1 if ist_fahrzeug else 0,
+                    funkkennung.strip() or None,
                     location_id,
                     self._active_mandant_id,
                 ),
