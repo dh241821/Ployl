@@ -654,6 +654,27 @@ PERMISSION_DEFAULTS: Dict[str, bool] = _permission_map(True)
 
 ROLE_PERMISSION_PRESETS: Dict[str, Dict[str, bool]] = {
     "admin": _permission_map(True),
+    "leitstelle": {
+        **_permission_map(False),
+        "standorte_lesen": True,
+        "standorte_schreiben": True,
+        "fahrzeuge_lesen": True,
+        "fahrzeuge_schreiben": True,
+        "produkte_lesen": True,
+    },
+    "technik": {
+        **_permission_map(False),
+        "produkte_lesen": True,
+        "produkte_schreiben": True,
+        "fahrzeuge_lesen": True,
+        "material_lesen": True,
+        "material_schreiben": True,
+    },
+    "lager": {
+        **_permission_map(False),
+        "material_lesen": True,
+        "material_schreiben": True,
+    },
     "benutzer": {
         **_permission_map(False),
         "standorte_lesen": True,
@@ -663,7 +684,16 @@ ROLE_PERMISSION_PRESETS: Dict[str, Dict[str, bool]] = {
         "material_schreiben": True,
         "fahrzeuge_lesen": True,
     },
+    "viewer": {
+        **_permission_map(False),
+        "standorte_lesen": True,
+        "produkte_lesen": True,
+        "material_lesen": True,
+        "fahrzeuge_lesen": True,
+    },
 }
+
+ROLE_CHOICES: List[str] = list(ROLE_PERMISSION_PRESETS.keys())
 
 
 @dataclass

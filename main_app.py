@@ -37,6 +37,7 @@ from app.database import (
     PERMISSION_COLUMNS,
     PERMISSION_DEFAULTS,
     PERMISSION_MODULES,
+    ROLE_CHOICES,
     ROLE_PERMISSION_PRESETS,
     PRODUKT_VORSCHLAEGE,
     REPARATUR_DATEI_KATEGORIEN,
@@ -56,6 +57,33 @@ REPAIR_STORAGE = Path("storage/reparaturen")
 REPAIR_STORAGE.mkdir(parents=True, exist_ok=True)
 EXPORTS_DIR = Path("exports")
 EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _autofit_table(table: Tableview) -> None:
+    try:
+        table.autofit_columns()
+    except Exception:
+        pass
+
+
+_ORIGINAL_BUILD_TABLE_DATA = Tableview.build_table_data
+_ORIGINAL_INSERT_ROW = Tableview.insert_row
+
+
+def _build_table_data_with_autofit(self: Tableview, *args: Any, **kwargs: Any) -> Any:
+    result = _ORIGINAL_BUILD_TABLE_DATA(self, *args, **kwargs)
+    _autofit_table(self)
+    return result
+
+
+def _insert_row_with_autofit(self: Tableview, *args: Any, **kwargs: Any) -> Any:
+    result = _ORIGINAL_INSERT_ROW(self, *args, **kwargs)
+    _autofit_table(self)
+    return result
+
+
+Tableview.build_table_data = _build_table_data_with_autofit  # type: ignore[assignment]
+Tableview.insert_row = _insert_row_with_autofit  # type: ignore[assignment]
 
 STATUS_OPTIONS: List[Tuple[str, str]] = [
     ("Im Dienst", "im_dienst"),
@@ -231,14 +259,37 @@ class NavigationSidebar(ttkb.Frame):
         self._commands: Dict[str, Callable[[], None]] = {}
         self._buttons: Dict[str, ttkb.Button] = {}
         self._selected: Optional[str] = None
+        self._normal_style = "SidebarNav.TButton"
+        self._selected_style = "SidebarNavSelected.TButton"
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
         style = ttkb.Style()
-        style.configure("SidebarHeading.TLabel", anchor=tk.W)
-        style.configure("SidebarNav.TButton", anchor=tk.W, justify=tk.LEFT, padding=(14, 8))
-        sidebar_bg = style.lookup("Sidebar.TFrame", "background") or "#f1f5f9"
+        sidebar_bg = style.lookup("Sidebar.TFrame", "background") or "#1e2530"
+        accent = getattr(style.colors, "primary", "#0d6efd")
+        heading_font = ("Inter", 9, "bold")
+        label_font = ("Inter", 11)
+        style.configure("SidebarHeading.TLabel", anchor=tk.W, font=heading_font)
+        style.configure(
+            self._normal_style,
+            anchor=tk.W,
+            justify=tk.LEFT,
+            padding=(14, 10),
+            relief=tk.FLAT,
+            font=label_font,
+        )
+        style.configure(
+            self._selected_style,
+            anchor=tk.W,
+            justify=tk.LEFT,
+            padding=(14, 10),
+            relief=tk.FLAT,
+            font=("Inter", 11, "bold"),
+            foreground="#ffffff",
+            background=accent,
+        )
+        style.map(self._selected_style, background=[("active", accent)])
 
         self.canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0, background=sidebar_bg)
         self.canvas.grid(row=0, column=0, sticky=tk.NSEW)
@@ -276,9 +327,9 @@ class NavigationSidebar(ttkb.Frame):
             self.inner,
             text=label,
             command=handle_select,
-            bootstyle="secondary",
+            style=self._normal_style,
+            cursor="hand2",
         )
-        button.configure(style="SidebarNav.TButton")
         button.grid(sticky=tk.EW, pady=4)
         self._buttons[key] = button
 
@@ -286,7 +337,7 @@ class NavigationSidebar(ttkb.Frame):
         if self._selected == key:
             return
         for name, button in self._buttons.items():
-            button.configure(bootstyle="secondary" if name != key else "primary")
+            button.configure(style=self._selected_style if name == key else self._normal_style)
         self._selected = key
 
 
@@ -1055,7 +1106,7 @@ class VehiclesView(ttkb.Frame):
         self.lifecycle_button.pack(side=LEFT, padx=5)
         self.transfer_button = ttkb.Button(
             toolbar,
-            text="Produkte umhängen",
+            text="Produkte eines Fahrzeuges verschieben",
             command=self.transfer_products,
             bootstyle="warning",
         )
@@ -1655,7 +1706,7 @@ class MasterDataView(ttkb.Frame):
         nav_container.rowconfigure(0, weight=1)
 
         self.nav = ttkb.Treeview(nav_container, show="tree", selectmode="browse", height=18)
-        self.nav.column("#0", width=300, minwidth=280, stretch=False)
+        self.nav.column("#0", width=360, minwidth=340, stretch=False, anchor=tk.W)
         self.nav.grid(row=0, column=0, sticky=tk.NS)
         nav_scroll = ttkb.Scrollbar(nav_container, orient=tk.VERTICAL, command=self.nav.yview)
         nav_scroll.grid(row=0, column=1, sticky=tk.NS, padx=(4, 0))
@@ -3281,13 +3332,14 @@ class UserDialog(ttkb.Toplevel):
         self.rolle_var = ttkb.StringVar(value=rolle)
         self._allow_role_preset = permissions is None
         self._applying_preset = False
-        ttkb.Combobox(
+        self.role_box = ttkb.Combobox(
             container,
             textvariable=self.rolle_var,
-            values=["admin", "benutzer"],
+            values=ROLE_CHOICES,
             state="readonly",
             width=28,
-        ).grid(row=4, column=1, sticky=W)
+        )
+        self.role_box.grid(row=4, column=1, sticky=W)
         self.rolle_var.trace_add("write", self._on_role_change)
 
         base_preset = ROLE_PERMISSION_PRESETS.get(rolle, PERMISSION_DEFAULTS)
