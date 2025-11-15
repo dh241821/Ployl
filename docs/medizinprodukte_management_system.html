@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Medizinprodukte-Management System – Dokumentation</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1.5.10/css/pico.min.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+    }
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem 4rem;
+    }
+    pre code {
+      white-space: pre-wrap;
+    }
+    table {
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+    }
+    .loading {
+      text-align: center;
+      font-style: italic;
+      padding: 4rem 0;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
+</head>
+<body>
+  <main>
+    <article id="doc" class="loading">Dokumentation wird geladen …</article>
+  </main>
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      const target = document.getElementById("doc");
+
+      fetch("medizinprodukte_management_system.md")
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`Konnte Markdown-Datei nicht laden: ${response.status}`);
+          }
+          return response.text();
+        })
+        .then((text) => {
+          target.classList.remove("loading");
+          target.innerHTML = marked.parse(text, { mangle: false, headerIds: false });
+        })
+        .catch((error) => {
+          target.classList.remove("loading");
+          target.innerHTML = `<p><strong>Fehler:</strong> ${error.message}</p>`;
+        });
+    });
+  </script>
+</body>
+</html>
