@@ -320,10 +320,19 @@ class DashboardView(ttkb.Frame):
 
 
 class ProductsView(ttkb.Frame):
-    def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
+    def __init__(
+        self,
+        master: tk.Misc,
+        db: DatabaseManager,
+        user: Optional[User] = None,
+    ) -> None:
         super().__init__(master)
         self.db = db
         self.write_allowed = True
+        self.user = user
+        self._location_filter_map: Dict[str, Optional[int]] = {"Alle": None}
+        self._vehicle_filter_map: Dict[str, Optional[int]] = {"Alle": None}
+        self._category_filter_values: List[str] = ["Alle"]
 
         toolbar = ttkb.Frame(self)
         toolbar.pack(fill=tk.X, padx=10, pady=10)
@@ -397,6 +406,45 @@ class ProductsView(ttkb.Frame):
             bootstyle="round-toggle",
         ).pack(side=LEFT, padx=(20, 0))
 
+        filter_frame = ttkb.Frame(self)
+        filter_frame.pack(fill=tk.X, padx=10)
+
+        ttkb.Label(filter_frame, text="Standort:").grid(row=0, column=0, sticky=W, pady=5)
+        self.location_filter_var = ttkb.StringVar(value="Alle")
+        self.location_filter_box = ttkb.Combobox(
+            filter_frame,
+            textvariable=self.location_filter_var,
+            state="readonly",
+            width=30,
+            values=list(self._location_filter_map.keys()),
+        )
+        self.location_filter_box.grid(row=0, column=1, sticky=W, padx=(0, 15))
+        self.location_filter_box.bind("<<ComboboxSelected>>", lambda _event: self.refresh())
+
+        ttkb.Label(filter_frame, text="Kategorie:").grid(row=0, column=2, sticky=W, pady=5)
+        self.category_filter_var = ttkb.StringVar(value="Alle")
+        self.category_filter_box = ttkb.Combobox(
+            filter_frame,
+            textvariable=self.category_filter_var,
+            state="readonly",
+            width=25,
+            values=self._category_filter_values,
+        )
+        self.category_filter_box.grid(row=0, column=3, sticky=W, padx=(0, 15))
+        self.category_filter_box.bind("<<ComboboxSelected>>", lambda _event: self.refresh())
+
+        ttkb.Label(filter_frame, text="Fahrzeug:").grid(row=0, column=4, sticky=W, pady=5)
+        self.vehicle_filter_var = ttkb.StringVar(value="Alle")
+        self.vehicle_filter_box = ttkb.Combobox(
+            filter_frame,
+            textvariable=self.vehicle_filter_var,
+            state="readonly",
+            width=25,
+            values=list(self._vehicle_filter_map.keys()),
+        )
+        self.vehicle_filter_box.grid(row=0, column=5, sticky=W)
+        self.vehicle_filter_box.bind("<<ComboboxSelected>>", lambda _event: self.refresh())
+
         columns = [
             {"text": "ID"},
             {"text": "Name"},
@@ -413,6 +461,10 @@ class ProductsView(ttkb.Frame):
         self.table = Tableview(self, coldata=columns, rowdata=[], pagesize=15)
         self.table.pack(fill=BOTH, expand=True, padx=10, pady=10)
         self.table.bind("<Double-1>", lambda _event: self.edit_product())
+
+    def set_user(self, user: Optional[User]) -> None:
+        self.user = user
+        self.refresh()
 
     def set_write_permissions(self, allowed: bool) -> None:
         """Enable or disable write interactions for the product view."""
@@ -440,11 +492,32 @@ class ProductsView(ttkb.Frame):
 
     def refresh(self) -> None:
         self.table.delete_rows()
+        rows = self.db.list_products()
+        accessible_rows: List[sqlite3.Row] = []
+        for row in rows:
+            standort_id = row["standort_id"] if "standort_id" in row.keys() else None
+            if self.user and not self.user.can_read_location(standort_id):
+                continue
+            accessible_rows.append(row)
+
+        self._update_filter_values(accessible_rows)
+
         query = self.search_var.get().strip().lower()
         status_label = self.status_var.get().strip()
         status_filter = STATUS_LABEL_TO_VALUE.get(status_label, "") if status_label else ""
         hide_retired = self.hide_retired.get()
-        for row in self.db.list_products():
+
+        location_selection = self.location_filter_var.get()
+        location_filter = self._location_filter_map.get(location_selection)
+        vehicle_selection = self.vehicle_filter_var.get()
+        vehicle_filter = self._vehicle_filter_map.get(vehicle_selection)
+        category_selection = self.category_filter_var.get()
+        expect_no_category = category_selection == "Ohne Kategorie"
+        category_filter = None
+        if category_selection not in ("", "Alle", "Ohne Kategorie"):
+            category_filter = category_selection
+
+        for row in accessible_rows:
             haystack = " ".join(
                 filter(
                     None,
@@ -466,6 +539,29 @@ class ProductsView(ttkb.Frame):
                 continue
             if hide_retired and row["status"] == "ausgeschieden":
                 continue
+
+            standort_id = row["standort_id"] if "standort_id" in row.keys() else None
+            if location_filter is not None:
+                if location_filter == -1:
+                    if standort_id is not None:
+                        continue
+                elif standort_id != location_filter:
+                    continue
+
+            fahrzeug_id = row["fahrzeug_id"] if "fahrzeug_id" in row.keys() else None
+            if vehicle_filter is not None:
+                if vehicle_filter == -1:
+                    if fahrzeug_id is not None:
+                        continue
+                elif fahrzeug_id != vehicle_filter:
+                    continue
+
+            kategorie_name = row["kategorie_name"] or ""
+            if expect_no_category and kategorie_name:
+                continue
+            if category_filter and kategorie_name != category_filter:
+                continue
+
             status_label_value = display_status(row["status"])
             location_label = self.db.location_label_from_product(row)
             self.table.insert_row(
@@ -483,10 +579,95 @@ class ProductsView(ttkb.Frame):
                 )
             )
 
+    def _update_filter_values(self, rows: List[sqlite3.Row]) -> None:
+        location_map: Dict[str, Optional[int]] = {"Alle": None}
+        vehicle_map: Dict[str, Optional[int]] = {"Alle": None}
+        category_markers: List[str] = []
+        has_location_none = False
+        has_vehicle_none = False
+
+        for row in rows:
+            standort_id = row["standort_id"] if "standort_id" in row.keys() else None
+            if standort_id is None:
+                has_location_none = True
+            else:
+                label = self.db.location_label_from_product(row) or f"Standort #{standort_id}"
+                if label in location_map:
+                    label = f"{label} (ID {standort_id})"
+                location_map[label] = int(standort_id)
+
+            fahrzeug_id = row["fahrzeug_id"] if "fahrzeug_id" in row.keys() else None
+            if fahrzeug_id is None:
+                has_vehicle_none = True
+            else:
+                vehicle_label = row["fahrzeug_name"] or f"Fahrzeug #{fahrzeug_id}"
+                if vehicle_label in vehicle_map:
+                    vehicle_label = f"{vehicle_label} (ID {fahrzeug_id})"
+                vehicle_map[vehicle_label] = int(fahrzeug_id)
+
+            category_markers.append(row["kategorie_name"] or "__NONE__")
+
+        if has_location_none:
+            location_map["Ohne Standort"] = -1
+        if has_vehicle_none:
+            vehicle_map["Ohne Fahrzeug"] = -1
+
+        previous_location = self.location_filter_var.get()
+        self._location_filter_map = location_map
+        self.location_filter_box.configure(values=list(location_map.keys()))
+        if previous_location in location_map:
+            self.location_filter_var.set(previous_location)
+        else:
+            self.location_filter_var.set("Alle")
+
+        previous_vehicle = self.vehicle_filter_var.get()
+        self._vehicle_filter_map = vehicle_map
+        self.vehicle_filter_box.configure(values=list(vehicle_map.keys()))
+        if previous_vehicle in vehicle_map:
+            self.vehicle_filter_var.set(previous_vehicle)
+        else:
+            self.vehicle_filter_var.set("Alle")
+
+        categories = sorted({marker for marker in category_markers if marker not in {"", "__NONE__"}})
+        values: List[str] = ["Alle"]
+        if "__NONE__" in category_markers:
+            values.append("Ohne Kategorie")
+        values.extend(categories)
+        previous_category = self.category_filter_var.get()
+        self._category_filter_values = values
+        self.category_filter_box.configure(values=values)
+        if previous_category in values:
+            self.category_filter_var.set(previous_category)
+        else:
+            self.category_filter_var.set("Alle")
+
+    def _ensure_write_for_product(self, produkt_id: Optional[int]) -> bool:
+        if not self.user or not self.user.location_permissions or produkt_id is None:
+            return True
+        product = self.db.get_product(produkt_id)
+        if not product:
+            Messagebox.show_error("Produkt nicht gefunden", "Fehler")
+            return False
+        standort_id = product["standort_id"] if "standort_id" in product.keys() else None
+        if self.user.can_write_location(standort_id):
+            return True
+        Messagebox.show_info(
+            "Sie haben keine Schreibrechte für den Standort dieses Produkts.",
+            "Keine Berechtigung",
+        )
+        return False
+
     def create_product(self) -> None:
         if not self._require_write():
             return
-        editor = ProductEditor(self, self.db)
+        if self.user and self.user.location_permissions:
+            if not any(perm.schreiben for perm in self.user.location_permissions.values()):
+                Messagebox.show_info(
+                    "Sie haben keine Standorte mit Schreibrechten.",
+                    "Keine Berechtigung",
+                )
+                return
+        editor = ProductEditor(self, self.db, user=self.user)
         self.wait_window(editor)
         if editor.saved:
             self.refresh()
@@ -497,7 +678,9 @@ class ProductsView(ttkb.Frame):
         product_id = self.selected_product_id()
         if not product_id:
             return
-        editor = ProductEditor(self, self.db, produkt_id=product_id)
+        if not self._ensure_write_for_product(product_id):
+            return
+        editor = ProductEditor(self, self.db, produkt_id=product_id, user=self.user)
         self.wait_window(editor)
         if editor.saved:
             self.refresh()
@@ -517,7 +700,15 @@ class ProductsView(ttkb.Frame):
         product_id = self.selected_product_id()
         if not product_id:
             return
-        editor = ProductEditor(self, self.db, produkt_id=product_id, initial_tab=tab_name)
+        if not self._ensure_write_for_product(product_id):
+            return
+        editor = ProductEditor(
+            self,
+            self.db,
+            produkt_id=product_id,
+            initial_tab=tab_name,
+            user=self.user,
+        )
         self.wait_window(editor)
         if editor.saved:
             self.refresh()
@@ -527,6 +718,8 @@ class ProductsView(ttkb.Frame):
             return
         product_id = self.selected_product_id()
         if not product_id:
+            return
+        if not self._ensure_write_for_product(product_id):
             return
         dialog = RetireProductDialog(self)
         self.wait_window(dialog)
@@ -1851,7 +2044,7 @@ class UsersFrame(ttkb.Frame):
         return None
 
     def add_user(self) -> None:
-        dialog = UserDialog(self)
+        dialog = UserDialog(self, self.db)
         self.wait_window(dialog)
         if not dialog.result:
             return
@@ -1864,6 +2057,7 @@ class UsersFrame(ttkb.Frame):
                 dienstnummer=dienstnummer,
                 rolle=rolle,
                 permissions=dialog.permissions,
+                location_permissions=dialog.location_permissions,
             )
         except (ValueError, sqlite3.IntegrityError) as exc:
             Messagebox.show_error(str(exc), "Fehler")
@@ -1875,13 +2069,16 @@ class UsersFrame(ttkb.Frame):
         row = self.selected_user()
         if not row:
             return
+        assigned_locations = self.db.list_user_location_permissions(row["id"])
         dialog = UserDialog(
             self,
+            self.db,
             vorname=row["vorname"] or "",
             nachname=row["nachname"] or "",
             dienstnummer=row["dienstnummer"] or "",
             rolle=row["role"],
             permissions={column: bool(row[column]) for column in PERMISSION_COLUMNS},
+            assigned_locations=assigned_locations,
         )
         self.wait_window(dialog)
         if not dialog.result:
@@ -1895,6 +2092,7 @@ class UsersFrame(ttkb.Frame):
                 dienstnummer=dienstnummer,
                 rolle=rolle,
                 permissions=dialog.permissions,
+                location_permissions=dialog.location_permissions,
             )
         except (ValueError, sqlite3.IntegrityError) as exc:
             Messagebox.show_error(str(exc), "Fehler")
@@ -2136,18 +2334,35 @@ class UserDialog(ttkb.Toplevel):
     def __init__(
         self,
         master: tk.Misc,
+        db: DatabaseManager,
         *,
         vorname: str = "",
         nachname: str = "",
         dienstnummer: str = "",
         rolle: str = "benutzer",
         permissions: Optional[Dict[str, bool]] = None,
+        assigned_locations: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         super().__init__(master)
         self.title("Benutzer")
         self.resizable(False, False)
         self.result: Optional[Tuple[str, str, str, str]] = None
         self.permissions: Dict[str, bool] = {}
+        self.db = db
+        self.locations = db.list_locations()
+        self._location_labels: Dict[int, str] = {
+            row["id"]: self._format_location(row) for row in self.locations
+        }
+        self.location_permissions: Dict[int, Dict[str, bool]] = {}
+        if assigned_locations:
+            for entry in assigned_locations:
+                standort_id = entry["standort_id"]
+                self.location_permissions[standort_id] = {
+                    "lesen": bool(entry["lesen"]),
+                    "schreiben": bool(entry["schreiben"]),
+                }
+                if standort_id not in self._location_labels:
+                    self._location_labels[standort_id] = entry.get("label") or f"Standort #{standort_id}"
 
         container = ttkb.Frame(self, padding=20)
         container.pack(fill=BOTH, expand=True)
@@ -2181,7 +2396,7 @@ class UserDialog(ttkb.Toplevel):
                     permission_values[key] = bool(value)
 
         self.permission_vars: Dict[str, Tuple[ttkb.BooleanVar, ttkb.BooleanVar]] = {}
-        permissions_frame = ttkb.Labelframe(container, text="Berechtigungen")
+        permissions_frame = ttkb.Labelframe(container, text="Modul-Berechtigungen")
         permissions_frame.grid(row=4, column=0, columnspan=2, sticky=W + tk.E, pady=(15, 0))
 
         for index, (module, label) in enumerate(PERMISSION_MODULES):
@@ -2205,12 +2420,135 @@ class UserDialog(ttkb.Toplevel):
                 lambda *_args, r_var=read_var, w_var=write_var: self._on_write_toggle(r_var, w_var),
             )
 
+        location_frame = ttkb.Labelframe(container, text="Standort-Berechtigungen")
+        location_frame.grid(row=5, column=0, columnspan=2, sticky=W + tk.E, pady=(15, 0))
+
+        self.location_tree = ttkb.Treeview(
+            location_frame,
+            columns=("standort", "lesen", "schreiben"),
+            show="headings",
+            height=6,
+        )
+        self.location_tree.heading("standort", text="Standort")
+        self.location_tree.heading("lesen", text="Lesen")
+        self.location_tree.heading("schreiben", text="Schreiben")
+        self.location_tree.column("standort", width=280)
+        self.location_tree.column("lesen", width=100, anchor=tk.CENTER)
+        self.location_tree.column("schreiben", width=120, anchor=tk.CENTER)
+        self.location_tree.pack(fill=BOTH, expand=True, padx=5, pady=5)
+
+        location_buttons = ttkb.Frame(location_frame)
+        location_buttons.pack(fill=tk.X, padx=5, pady=(0, 5))
+        ttkb.Button(
+            location_buttons,
+            text="Hinzufügen",
+            command=self.add_location_permission,
+            bootstyle="success",
+        ).pack(side=LEFT, padx=2)
+        ttkb.Button(
+            location_buttons,
+            text="Bearbeiten",
+            command=self.edit_location_permission,
+            bootstyle="secondary",
+        ).pack(side=LEFT, padx=2)
+        ttkb.Button(
+            location_buttons,
+            text="Entfernen",
+            command=self.remove_location_permission,
+            bootstyle="danger",
+        ).pack(side=LEFT, padx=2)
+
         button_frame = ttkb.Frame(container)
-        button_frame.grid(row=5, column=0, columnspan=2, pady=(20, 0))
+        button_frame.grid(row=6, column=0, columnspan=2, pady=(20, 0))
         ttkb.Button(button_frame, text="Speichern", command=self.on_save, bootstyle="success").pack(side=LEFT, padx=5)
         ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(side=LEFT, padx=5)
 
+        self._refresh_location_table()
         self.grab_set()
+
+    def _format_location(self, row: sqlite3.Row) -> str:
+        parts = [
+            row["land"],
+            row["bereich"],
+            row["bezirk"],
+            row["bezirksstelle"],
+            row["ortsstelle"],
+        ]
+        label = " / ".join([part for part in parts if part])
+        if not label:
+            label = f"Standort #{row['id']}"
+        return label
+
+    def _refresh_location_table(self) -> None:
+        for item in self.location_tree.get_children():
+            self.location_tree.delete(item)
+        for standort_id, flags in sorted(self.location_permissions.items(), key=lambda item: self._location_labels.get(item[0], "")):
+            label = self._location_labels.get(standort_id, f"Standort #{standort_id}")
+            lesen_text = "Ja" if flags.get("lesen") else "Nein"
+            schreiben_text = "Ja" if flags.get("schreiben") else "Nein"
+            self.location_tree.insert(
+                "",
+                tk.END,
+                iid=str(standort_id),
+                values=(label, lesen_text, schreiben_text),
+            )
+
+    def _available_location_choices(self) -> List[Tuple[int, str]]:
+        choices: List[Tuple[int, str]] = []
+        for row in self.locations:
+            label = self._location_labels.get(row["id"], self._format_location(row))
+            if row["id"] not in self.location_permissions:
+                choices.append((row["id"], label))
+        choices.sort(key=lambda item: item[1])
+        return choices
+
+    def _selected_location_id(self) -> Optional[int]:
+        selection = self.location_tree.selection()
+        if not selection:
+            Messagebox.show_info("Bitte einen Standort auswählen", "Hinweis")
+            return None
+        return int(selection[0])
+
+    def add_location_permission(self) -> None:
+        choices = self._available_location_choices()
+        if not choices:
+            Messagebox.show_info("Alle Standorte sind bereits zugewiesen.", "Hinweis")
+            return
+        dialog = LocationPermissionDialog(self, choices)
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        standort_id, lesen, schreiben = dialog.result
+        self.location_permissions[standort_id] = {"lesen": lesen, "schreiben": schreiben}
+        self._refresh_location_table()
+
+    def edit_location_permission(self) -> None:
+        standort_id = self._selected_location_id()
+        if standort_id is None:
+            return
+        current = self.location_permissions.get(standort_id, {"lesen": True, "schreiben": False})
+        label = self._location_labels.get(standort_id, f"Standort #{standort_id}")
+        dialog = LocationPermissionDialog(
+            self,
+            [(standort_id, label)],
+            selected_id=standort_id,
+            lesen=current.get("lesen", True),
+            schreiben=current.get("schreiben", False),
+            allow_location_change=False,
+        )
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        _standort_id, lesen, schreiben = dialog.result
+        self.location_permissions[standort_id] = {"lesen": lesen, "schreiben": schreiben}
+        self._refresh_location_table()
+
+    def remove_location_permission(self) -> None:
+        standort_id = self._selected_location_id()
+        if standort_id is None:
+            return
+        self.location_permissions.pop(standort_id, None)
+        self._refresh_location_table()
 
     def on_save(self) -> None:
         vorname = self.vorname_var.get().strip()
@@ -2233,6 +2571,97 @@ class UserDialog(ttkb.Toplevel):
         if write_var.get() and not read_var.get():
             read_var.set(True)
 
+
+class LocationPermissionDialog(ttkb.Toplevel):
+    def __init__(
+        self,
+        master: tk.Misc,
+        choices: List[Tuple[int, str]],
+        *,
+        selected_id: Optional[int] = None,
+        lesen: bool = True,
+        schreiben: bool = False,
+        allow_location_change: bool = True,
+    ) -> None:
+        super().__init__(master)
+        self.title("Standortberechtigung")
+        self.resizable(False, False)
+        self.result: Optional[Tuple[int, bool, bool]] = None
+        self._choices = choices
+        self._allow_location_change = allow_location_change
+        self._selected_location: Optional[int] = selected_id
+
+        container = ttkb.Frame(self, padding=20)
+        container.pack(fill=BOTH, expand=True)
+
+        ttkb.Label(container, text="Standort").grid(row=0, column=0, sticky=W, pady=5)
+        if allow_location_change:
+            self.location_var = ttkb.StringVar()
+            self._choice_map = {}
+            values: List[str] = []
+            for standort_id, label in choices:
+                display = label or f"Standort #{standort_id}"
+                self._choice_map[display] = standort_id
+                values.append(display)
+                if selected_id == standort_id:
+                    self.location_var.set(display)
+            if not self.location_var.get() and values:
+                self.location_var.set(values[0])
+            ttkb.Combobox(
+                container,
+                textvariable=self.location_var,
+                values=values,
+                state="readonly",
+                width=35,
+            ).grid(row=0, column=1, sticky=W)
+        else:
+            label = next((label for standort_id, label in choices if standort_id == selected_id), "")
+            self.location_var = ttkb.StringVar(value=label)
+            ttkb.Entry(container, textvariable=self.location_var, width=35, state="readonly").grid(
+                row=0, column=1, sticky=W
+            )
+
+        ttkb.Label(container, text="Lesen").grid(row=1, column=0, sticky=W, pady=5)
+        self.read_var = ttkb.BooleanVar(value=lesen)
+        ttkb.Checkbutton(container, variable=self.read_var, bootstyle="round-toggle").grid(
+            row=1, column=1, sticky=W
+        )
+
+        ttkb.Label(container, text="Schreiben").grid(row=2, column=0, sticky=W, pady=5)
+        self.write_var = ttkb.BooleanVar(value=schreiben)
+        write_box = ttkb.Checkbutton(container, variable=self.write_var, bootstyle="round-toggle")
+        write_box.grid(row=2, column=1, sticky=W)
+        self.write_var.trace_add("write", lambda *_args: self._ensure_write_implies_read())
+
+        button_frame = ttkb.Frame(container)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=(20, 0))
+        ttkb.Button(button_frame, text="Speichern", command=self.on_save, bootstyle="success").pack(side=LEFT, padx=5)
+        ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(side=LEFT, padx=5)
+
+        self.grab_set()
+
+    def _ensure_write_implies_read(self) -> None:
+        if self.write_var.get() and not self.read_var.get():
+            self.read_var.set(True)
+
+    def on_save(self) -> None:
+        if self._allow_location_change:
+            label = self.location_var.get()
+            standort_id = self._choice_map.get(label)
+            if standort_id is None:
+                Messagebox.show_warning("Bitte einen Standort auswählen", "Hinweis")
+                return
+        else:
+            standort_id = self._selected_location
+        if standort_id is None:
+            Messagebox.show_warning("Kein Standort ausgewählt", "Hinweis")
+            return
+        lesen = bool(self.read_var.get())
+        schreiben = bool(self.write_var.get())
+        if schreiben and not lesen:
+            lesen = True
+        self.result = (standort_id, lesen, schreiben)
+        self.destroy()
 
 class RetireProductDialog(ttkb.Toplevel):
     def __init__(self, master: tk.Misc) -> None:
@@ -2361,6 +2790,7 @@ class ProductEditor(ttkb.Toplevel):
         produkt_id: Optional[int] = None,
         *,
         initial_tab: str = "details",
+        user: Optional[User] = None,
     ) -> None:
         super().__init__(master)
         self.db = db
@@ -2369,11 +2799,24 @@ class ProductEditor(ttkb.Toplevel):
         self.initial_tab = initial_tab
         self.title("Produkt bearbeiten" if produkt_id else "Neues Produkt")
         self.geometry("720x650")
+        self.user = user
 
         self.categories = db.list_categories("produkt")
         self.product_types = db.list_product_types()
         self.product_models = db.list_product_models()
-        self.locations = db.list_locations()
+        all_locations = db.list_locations()
+        if user and user.location_permissions:
+            allowed_ids = {loc_id for loc_id, perm in user.location_permissions.items() if perm.schreiben}
+            self.locations = [row for row in all_locations if row["id"] in allowed_ids]
+        else:
+            self.locations = all_locations
+        if user and user.location_permissions and not self.locations:
+            Messagebox.show_error(
+                "Es sind keine Standorte mit Schreibrechten verfügbar.",
+                "Keine Berechtigung",
+            )
+            self.destroy()
+            return
         self.vehicles = db.list_vehicles()
         self.component_types = db.list_component_types()
         self.repair_types = db.list_repair_types()
@@ -2809,6 +3252,12 @@ class ProductEditor(ttkb.Toplevel):
         standort_id = self._resolve_location(self.standort_var.get())
         if not standort_id:
             Messagebox.show_error("Bitte einen Standort auswählen", "Fehler")
+            return
+        if self.user and not self.user.can_write_location(standort_id):
+            Messagebox.show_info(
+                "Sie haben keine Schreibrechte für den ausgewählten Standort.",
+                "Keine Berechtigung",
+            )
             return
 
         fahrzeug_id = self._resolve_vehicle(self.fahrzeug_var.get())
@@ -4427,8 +4876,9 @@ class MedizinprodukteApp(ttkb.Window):
         self.views.append(self.dashboard_view)
 
         if self.user and self.user.can_read("produkte"):
-            self.products_view = ProductsView(self.notebook, self.db)
+            self.products_view = ProductsView(self.notebook, self.db, user=self.user)
             self.products_view.set_write_permissions(self.user.can_write("produkte"))
+            self.products_view.set_user(self.user)
             self.notebook.add(self.products_view, text="Produkte")
             self.views.append(self.products_view)
         else:

@@ -7,7 +7,7 @@ import contextlib
 import hashlib
 import io
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -40,6 +40,16 @@ PERMISSION_DEFAULTS: Dict[str, bool] = {column: True for column in PERMISSION_CO
 
 
 @dataclass
+class LocationPermission:
+    """Represents read/write permissions for a specific location."""
+
+    standort_id: int
+    lesen: bool
+    schreiben: bool
+    label: str = ""
+
+
+@dataclass
 class User:
     """Represents an authenticated user."""
 
@@ -55,6 +65,7 @@ class User:
     material_schreiben: bool
     fahrzeuge_lesen: bool
     fahrzeuge_schreiben: bool
+    location_permissions: Dict[int, LocationPermission] = field(default_factory=dict)
 
     def can_read(self, module: str) -> bool:
         """Return whether the user is allowed to read the given module."""
@@ -65,6 +76,26 @@ class User:
         """Return whether the user is allowed to write the given module."""
 
         return bool(getattr(self, f"{module}_schreiben", False))
+
+    def can_read_location(self, standort_id: Optional[int]) -> bool:
+        """Return whether the user may read data for the given location."""
+
+        if not self.location_permissions:
+            return True
+        if standort_id is None:
+            return True
+        permission = self.location_permissions.get(int(standort_id))
+        return bool(permission and permission.lesen)
+
+    def can_write_location(self, standort_id: Optional[int]) -> bool:
+        """Return whether the user may write data for the given location."""
+
+        if not self.location_permissions:
+            return True
+        if standort_id is None:
+            return True
+        permission = self.location_permissions.get(int(standort_id))
+        return bool(permission and permission.schreiben)
 
 
 class DatabaseManager:
@@ -106,6 +137,16 @@ class DatabaseManager:
                     material_schreiben INTEGER NOT NULL DEFAULT 1,
                     fahrzeuge_lesen INTEGER NOT NULL DEFAULT 1,
                     fahrzeuge_schreiben INTEGER NOT NULL DEFAULT 1
+                );
+
+                CREATE TABLE IF NOT EXISTS benutzer_standorte (
+                    benutzer_id INTEGER NOT NULL,
+                    standort_id INTEGER NOT NULL,
+                    lesen INTEGER NOT NULL DEFAULT 1,
+                    schreiben INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (benutzer_id, standort_id),
+                    FOREIGN KEY(benutzer_id) REFERENCES benutzer(id) ON DELETE CASCADE,
+                    FOREIGN KEY(standort_id) REFERENCES standorte(id) ON DELETE CASCADE
                 );
 
                 CREATE TABLE IF NOT EXISTS kategorien (
@@ -543,12 +584,23 @@ class DatabaseManager:
         if row["password_hash"] != self.hash_password(password):
             return None
         permission_kwargs = {column: bool(row[column]) for column in PERMISSION_COLUMNS}
+        location_entries = self.list_user_location_permissions(row["id"])
+        location_permissions = {
+            entry["standort_id"]: LocationPermission(
+                standort_id=entry["standort_id"],
+                lesen=entry["lesen"],
+                schreiben=entry["schreiben"],
+                label=entry["label"],
+            )
+            for entry in location_entries
+        }
         return User(
             id=row["id"],
             username=row["username"],
             full_name=row["full_name"],
             role=row["role"],
             **permission_kwargs,
+            location_permissions=location_permissions,
         )
 
     def list_user_identifiers(self) -> List[Dict[str, str]]:
@@ -1569,6 +1621,54 @@ class DatabaseManager:
             )
         )
 
+    def list_user_location_permissions(self, benutzer_id: int) -> List[Dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT bs.standort_id,
+                   bs.lesen,
+                   bs.schreiben
+            FROM benutzer_standorte AS bs
+            WHERE bs.benutzer_id = ?
+            ORDER BY bs.standort_id
+            """,
+            (benutzer_id,),
+        ).fetchall()
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            label = self.location_label(row["standort_id"]) if row["standort_id"] else ""
+            result.append(
+                {
+                    "standort_id": row["standort_id"],
+                    "lesen": bool(row["lesen"]),
+                    "schreiben": bool(row["schreiben"]),
+                    "label": label,
+                }
+            )
+        return result
+
+    def _replace_user_location_permissions(
+        self, benutzer_id: int, permissions: Dict[int, Dict[str, bool]]
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM benutzer_standorte WHERE benutzer_id = ?",
+                (benutzer_id,),
+            )
+            for standort_id, flags in permissions.items():
+                if standort_id is None:
+                    continue
+                lesen = 1 if flags.get("lesen") else 0
+                schreiben = 1 if flags.get("schreiben") else 0
+                if schreiben and not lesen:
+                    lesen = 1
+                self.connection.execute(
+                    """
+                    INSERT INTO benutzer_standorte (benutzer_id, standort_id, lesen, schreiben)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (benutzer_id, standort_id, lesen, schreiben),
+                )
+
     def add_or_update_user(
         self,
         *,
@@ -1578,6 +1678,7 @@ class DatabaseManager:
         dienstnummer: str,
         rolle: str,
         permissions: Optional[Dict[str, bool]] = None,
+        location_permissions: Optional[Dict[int, Dict[str, bool]]] = None,
     ) -> int:
         username = dienstnummer.strip()
         if not username:
@@ -1609,26 +1710,32 @@ class DatabaseManager:
                         benutzer_id,
                     ),
                 )
-                return benutzer_id
-            columns_sql = ", ".join(PERMISSION_COLUMNS)
-            placeholders = ", ".join(["?"] * len(PERMISSION_COLUMNS))
-            cur = self.connection.execute(
-                f"""
-                INSERT INTO benutzer (username, password_hash, full_name, role, vorname, nachname, dienstnummer, {columns_sql})
-                VALUES (?, ?, ?, ?, ?, ?, ?, {placeholders})
-                """,
-                (
-                    username,
-                    self.hash_password(dienstnummer),
-                    full_name or username,
-                    rolle,
-                    vorname,
-                    nachname,
-                    dienstnummer,
-                    *permission_values,
-                ),
-            )
-            return int(cur.lastrowid)
+                user_id = benutzer_id
+            else:
+                columns_sql = ", ".join(PERMISSION_COLUMNS)
+                placeholders = ", ".join(["?"] * len(PERMISSION_COLUMNS))
+                cur = self.connection.execute(
+                    f"""
+                    INSERT INTO benutzer (username, password_hash, full_name, role, vorname, nachname, dienstnummer, {columns_sql})
+                    VALUES (?, ?, ?, ?, ?, ?, ?, {placeholders})
+                    """,
+                    (
+                        username,
+                        self.hash_password(dienstnummer),
+                        full_name or username,
+                        rolle,
+                        vorname,
+                        nachname,
+                        dienstnummer,
+                        *permission_values,
+                    ),
+                )
+                user_id = int(cur.lastrowid)
+
+        if location_permissions is not None:
+            self._replace_user_location_permissions(user_id, location_permissions)
+
+        return user_id
 
     def set_user_password(self, benutzer_id: int, password: str) -> None:
         with self.connection:
