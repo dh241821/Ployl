@@ -276,7 +276,6 @@ class NavigationSidebar(ttkb.Frame):
             self.inner,
             text=label,
             command=handle_select,
-            width=22,
             bootstyle="secondary",
         )
         button.configure(style="SidebarNav.TButton")
@@ -1656,7 +1655,7 @@ class MasterDataView(ttkb.Frame):
         nav_container.rowconfigure(0, weight=1)
 
         self.nav = ttkb.Treeview(nav_container, show="tree", selectmode="browse", height=18)
-        self.nav.column("#0", width=240, minwidth=220, stretch=False)
+        self.nav.column("#0", width=300, minwidth=280, stretch=False)
         self.nav.grid(row=0, column=0, sticky=tk.NS)
         nav_scroll = ttkb.Scrollbar(nav_container, orient=tk.VERTICAL, command=self.nav.yview)
         nav_scroll.grid(row=0, column=1, sticky=tk.NS, padx=(4, 0))
@@ -2576,14 +2575,24 @@ class VehicleModelsFrame(ttkb.Frame):
         return int(rows[0].values[0])
 
     def add_model(self) -> None:
-        if not self.brands:
-            Messagebox.show_info("Bitte zuerst eine Fahrzeugmarke anlegen.", "Hinweis")
-            return
         dialog = VehicleModelDialog(self, self.brands)
         self.wait_window(dialog)
         if not dialog.result:
             return
-        brand_id, name = dialog.result
+        brand_name, name = dialog.result
+        brand_row = next((row for row in self.brands if row["name"] == brand_name), None)
+        if not brand_row:
+            try:
+                brand_id = self.db.add_vehicle_brand(brand_name)
+            except sqlite3.IntegrityError:
+                brand_row = next(
+                    (row for row in self.db.list_vehicle_brands() if row["name"] == brand_name),
+                    None,
+                )
+                brand_id = int(brand_row["id"]) if brand_row else self.db.add_vehicle_brand(brand_name)
+            self.brands = self.db.list_vehicle_brands()
+        else:
+            brand_id = int(brand_row["id"])
         try:
             self.db.add_vehicle_model(brand_id, name)
         except sqlite3.IntegrityError as exc:
@@ -2603,9 +2612,6 @@ class VehicleModelsFrame(ttkb.Frame):
         model_id = self.selected_id()
         if not model_id:
             return
-        if not self.brands:
-            Messagebox.show_info("Bitte zuerst eine Fahrzeugmarke anlegen.", "Hinweis")
-            return
         model = next((row for row in self.db.list_vehicle_models() if row["id"] == model_id), None)
         if not model:
             Messagebox.show_error("Modell nicht gefunden", "Fehler")
@@ -2614,7 +2620,20 @@ class VehicleModelsFrame(ttkb.Frame):
         self.wait_window(dialog)
         if not dialog.result:
             return
-        brand_id, name = dialog.result
+        brand_name, name = dialog.result
+        brand_row = next((row for row in self.brands if row["name"] == brand_name), None)
+        if not brand_row:
+            try:
+                brand_id = self.db.add_vehicle_brand(brand_name)
+            except sqlite3.IntegrityError:
+                brand_row = next(
+                    (row for row in self.db.list_vehicle_brands() if row["name"] == brand_name),
+                    None,
+                )
+                brand_id = int(brand_row["id"]) if brand_row else self.db.add_vehicle_brand(brand_name)
+            self.brands = self.db.list_vehicle_brands()
+        else:
+            brand_id = int(brand_row["id"])
         try:
             self.db.update_vehicle_model(model_id, brand_id, name)
         except sqlite3.IntegrityError as exc:
@@ -3145,7 +3164,7 @@ class VehicleModelDialog(ttkb.Toplevel):
         super().__init__(master)
         self.title("Fahrzeugmodell")
         self.resizable(False, False)
-        self.result: Optional[Tuple[Optional[int], str]] = None
+        self.result: Optional[Tuple[str, str]] = None
 
         container = ttkb.Frame(self, padding=20)
         container.pack(fill=BOTH, expand=True)
@@ -3154,19 +3173,17 @@ class VehicleModelDialog(ttkb.Toplevel):
         self.brand_var = ttkb.StringVar()
         self.brands = brands
         values = [row["name"] for row in brands]
-        if not values:
-            Messagebox.show_error("Bitte zuerst eine Fahrzeugmarke anlegen.", "Hinweis")
-            self.destroy()
-            return
-        brand_box = ttkb.Combobox(
+        self.brand_box = SearchableCombobox(
             container,
             textvariable=self.brand_var,
             values=values,
-            state="readonly",
             width=30,
+            match_mode="contains",
         )
-        brand_box.grid(row=0, column=1, sticky=W)
-        self.brand_var.set(values[0])
+        self.brand_box.grid(row=0, column=1, sticky=W)
+        self.brand_box.set_completion_list(values)
+        if values:
+            self.brand_var.set(values[0])
 
         ttkb.Label(container, text="Modellname").grid(row=1, column=0, sticky=W, pady=5)
         self.name_var = ttkb.StringVar()
@@ -3179,9 +3196,9 @@ class VehicleModelDialog(ttkb.Toplevel):
                 brand_name = existing["marke_name"] or ""
             elif "marke" in keys:
                 brand_name = existing["marke"] or ""
-            if brand_name and brand_name in values:
+            if brand_name:
                 self.brand_var.set(brand_name)
-            else:
+            elif values:
                 self.brand_var.set(values[0])
             if "name" in keys:
                 self.name_var.set(existing["name"] or "")
@@ -3194,20 +3211,15 @@ class VehicleModelDialog(ttkb.Toplevel):
         self.grab_set()
 
     def on_save(self) -> None:
+        brand_name = self.brand_var.get().strip()
+        if not brand_name:
+            Messagebox.show_warning("Bitte eine Fahrzeugmarke angeben", "Hinweis")
+            return
         name = self.name_var.get().strip()
         if not name:
             Messagebox.show_warning("Bitte Modellname eintragen", "Hinweis")
             return
-        brand_value = self.brand_var.get()
-        brand_id: Optional[int] = None
-        for row in self.brands:
-            if row["name"] == brand_value:
-                brand_id = row["id"]
-                break
-        if brand_id is None:
-            Messagebox.show_warning("Bitte eine Fahrzeugmarke auswählen", "Hinweis")
-            return
-        self.result = (brand_id, name)
+        self.result = (brand_name, name)
         self.destroy()
 
 
@@ -6819,7 +6831,7 @@ class MaterialEditor(LargeDialog):
 
 class MedizinprodukteApp(ttkb.Window):
     def __init__(self) -> None:
-        super().__init__(themename="flatly")
+        super().__init__(themename="darkly")
         self.title("Medizinprodukte-Management System")
         self.geometry("1100x750")
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -6827,7 +6839,7 @@ class MedizinprodukteApp(ttkb.Window):
         self.db = DatabaseManager()
         self.user: Optional[User] = None
         self.preferences: Dict[str, str] = {}
-        self.current_theme = "flatly"
+        self.current_theme = "darkly"
         self.font_scale = 1.0
         self.show_welcome_info = True
         self.products_view: Optional[ProductsView] = None
@@ -6843,7 +6855,7 @@ class MedizinprodukteApp(ttkb.Window):
         self.user = login.user
         self.db.set_active_mandant(self.user.mandant_id)
         self.preferences = self.db.get_user_preferences(self.user.id)
-        self.current_theme = self.preferences.get("theme", "flatly") or "flatly"
+        self.current_theme = self.preferences.get("theme", "darkly") or "darkly"
         try:
             self.font_scale = float(self.preferences.get("font_scale", "1.0"))
         except ValueError:
@@ -6869,29 +6881,13 @@ class MedizinprodukteApp(ttkb.Window):
             font=("Helvetica", 12),
         )
 
-        self.personalize_button = ttkb.Button(
-            self.header_frame,
-            text="Personalisieren",
-            command=self.open_personalization,
-            bootstyle="info",
-        )
-        self.personalize_button.pack(side=RIGHT)
-
-        self.theme_button = ttkb.Button(
-            self.header_frame,
-            text=self._theme_button_text(),
-            command=self.toggle_theme,
-            bootstyle="secondary",
-        )
-        self.theme_button.pack(side=RIGHT, padx=(0, 10))
-
         self._update_welcome_visibility()
 
         layout = ttkb.Frame(self)
-        layout.pack(fill=BOTH, expand=True, padx=10, pady=(0, 12))
+        layout.pack(fill=BOTH, expand=True, padx=10, pady=(0, 12), anchor=tk.NW)
 
         self.sidebar = NavigationSidebar(layout, on_select=self._on_sidebar_select)
-        self.sidebar.pack(side=LEFT, fill=tk.Y, padx=(0, 16))
+        self.sidebar.pack(side=LEFT, fill=tk.Y, padx=(0, 16), anchor=tk.NW)
         self.sidebar.add_heading("Arbeitsbereiche")
 
         content = ttkb.Frame(layout)
@@ -7016,6 +7012,8 @@ class MedizinprodukteApp(ttkb.Window):
         account_menu = tk.Menu(menubar, tearoff=0)
         account_menu.add_command(label="Mein Konto", command=self.open_account_dialog)
         account_menu.add_command(label="Passwort ändern", command=self.open_password_dialog)
+        account_menu.add_command(label="Personalisierung", command=self.open_personalization)
+        account_menu.add_command(label="Hell-/Dunkelmodus", command=self.toggle_theme)
         menubar.add_cascade(label="Konto", menu=account_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -7241,15 +7239,16 @@ class MedizinprodukteApp(ttkb.Window):
         )
 
     def _apply_theme(self, theme: str, persist: bool = True) -> None:
-        available = set(self.style.theme_names())
-        selected = theme if theme in available else "flatly"
+        available_names = list(self.style.theme_names())
+        available = set(available_names)
+        fallback = available_names[0] if available_names else theme
+        default_theme = "darkly" if "darkly" in available else fallback
+        selected = theme if theme in available else default_theme
         self.style.theme_use(selected)
         self.current_theme = selected
         self._setup_styles()
         if hasattr(self, "dashboard_view"):
             self.dashboard_view.update_palette(self.current_theme in self._dark_themes())
-        if hasattr(self, "theme_button"):
-            self.theme_button.configure(text=self._theme_button_text())
         if persist and self.user:
             self.db.set_user_preference(self.user.id, "theme", self.current_theme)
 
@@ -7326,9 +7325,6 @@ class MedizinprodukteApp(ttkb.Window):
     @staticmethod
     def _dark_themes() -> set[str]:
         return {"darkly", "cyborg", "superhero", "solar"}
-
-    def _theme_button_text(self) -> str:
-        return "Dunkelmodus" if self.current_theme not in self._dark_themes() else "Hellmodus"
 
 
 class ApprovalCenterDialog(ttkb.Toplevel):
