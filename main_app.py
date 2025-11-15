@@ -48,6 +48,116 @@ from app.database import (
 import tkinter as tk
 from tkinter import filedialog, font as tkfont, scrolledtext
 
+# ---------------------------------------------------------------------------
+# global autocomplete support for every Combobox
+# ---------------------------------------------------------------------------
+
+_BaseCombobox = ttkb.Combobox
+
+
+class AutocompleteCombobox(_BaseCombobox):
+    """Combobox that keeps typing enabled and filters values on the fly."""
+
+    def __init__(
+        self,
+        master: tk.Misc,
+        *args: Any,
+        match_mode: str = "contains",
+        autocomplete: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        state = kwargs.get("state")
+        if state == "readonly":
+            kwargs["state"] = "normal"
+        values = kwargs.pop("values", None)
+        super().__init__(master, *args, values=values, **kwargs)
+        self._match_mode = match_mode
+        self._autocomplete_enabled = autocomplete
+        self._updating_dropdown = False
+        self._autocomplete_values = self._normalize_values(values if values is not None else self.cget("values"))
+        if self._autocomplete_enabled:
+            self._install_autocomplete()
+
+    def _install_autocomplete(self) -> None:
+        self.bind("<KeyRelease>", self._on_key_release, add="+")
+
+    def _normalize_values(self, values: Any) -> List[str]:
+        if not values:
+            return []
+        if isinstance(values, str):
+            return [values]
+        try:
+            return [str(value) for value in values]
+        except TypeError:
+            return [str(values)]
+
+    def _set_dropdown_values(self, values: Sequence[str]) -> None:
+        self._updating_dropdown = True
+        try:
+            super().configure(values=tuple(values))
+        finally:
+            self._updating_dropdown = False
+
+    def configure(self, cnf: Optional[Dict[str, Any]] = None, **kw: Any) -> Any:  # type: ignore[override]
+        if not self._updating_dropdown:
+            payload: Optional[Iterable[str]] = None
+            if cnf and "values" in cnf:
+                payload = cnf["values"]
+            if "values" in kw:
+                payload = kw["values"]
+            if payload is not None:
+                self._autocomplete_values = self._normalize_values(payload)
+        return super().configure(cnf, **kw)
+
+    config = configure
+
+    def set_completion_list(self, values: Iterable[str]) -> None:
+        self._autocomplete_values = list(values or [])
+        self._set_dropdown_values(self._autocomplete_values)
+
+    def _matches(self, haystack: str, needle: str) -> bool:
+        hay = haystack.lower()
+        ndl = needle.lower()
+        if self._match_mode == "prefix":
+            return hay.startswith(ndl)
+        return ndl in hay
+
+    def _on_key_release(self, event: tk.Event) -> None:  # type: ignore[override]
+        if self.cget("state") == "disabled":
+            return
+        if event.keysym in {
+            "BackSpace",
+            "Left",
+            "Right",
+            "Up",
+            "Down",
+            "Home",
+            "End",
+            "Return",
+            "Tab",
+            "Escape",
+        }:
+            return
+
+        typed = self.get()
+        base_values = self._autocomplete_values or []
+        if not typed:
+            self._set_dropdown_values(base_values)
+            return
+
+        matches = [value for value in base_values if self._matches(value, typed)]
+        dropdown_values = matches or base_values
+        self._set_dropdown_values(dropdown_values)
+        if matches:
+            suggestion = matches[0]
+            self.delete(0, tk.END)
+            self.insert(0, suggestion)
+            self.icursor(len(typed))
+            self.select_range(len(typed), tk.END)
+
+
+ttkb.Combobox = AutocompleteCombobox  # type: ignore[attr-defined]
+
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
@@ -184,7 +294,7 @@ class IdentifierCombobox(ttkb.Combobox):
         values: Optional[Iterable[str]] = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(master, values=list(values or ()), **kwargs)
+        super().__init__(master, values=list(values or ()), autocomplete=False, **kwargs)
         self._all_values: List[str] = list(values or ())
         self.bind("<KeyRelease>", self._on_key_release, add="+")
 
@@ -226,7 +336,7 @@ class SearchableCombobox(ttkb.Combobox):
         match_mode: str = "contains",
         **kwargs: Any,
     ) -> None:
-        super().__init__(master, values=list(values or ()), **kwargs)
+        super().__init__(master, values=list(values or ()), autocomplete=False, **kwargs)
         self._base_values: List[str] = list(values or ())
         self.match_mode = match_mode
         self.bind("<KeyRelease>", self._on_key_release, add="+")
@@ -648,6 +758,12 @@ class ProductsView(ttkb.Frame):
         self.mass_upload_button.pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="Export CSV", command=self.export_products, bootstyle="info").pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="Lebenslauf", command=self.export_lifecycle, bootstyle="info").pack(side=LEFT, padx=5)
+        ttkb.Button(
+            toolbar,
+            text="Fahrzeug-Lebenslauf",
+            command=self.export_vehicle_lifecycle_for_product,
+            bootstyle="secondary",
+        ).pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="Liste HTML", command=self.export_html, bootstyle="primary").pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="Liste PDF", command=self.export_pdf, bootstyle="primary").pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="ICS Export", command=self.export_ics, bootstyle="secondary").pack(side=LEFT, padx=5)
@@ -1082,6 +1198,29 @@ class ProductsView(ttkb.Frame):
             return
         path.write_text(html, encoding="utf-8")
         notify_report_saved(path)
+
+    def export_vehicle_lifecycle_for_product(self) -> None:
+        product_id = self.selected_product_id()
+        if not product_id:
+            return
+        product = self.db.get_product(product_id)
+        if not product or not product.get("fahrzeug_id"):
+            Messagebox.show_warning(
+                "Dieses Produkt ist keinem Fahrzeug zugeordnet.",
+                "Fahrzeug-Lebenslauf",
+            )
+            return
+        fahrzeug_id = int(product["fahrzeug_id"])
+        vehicle_name = product.get("fahrzeug_name") or f"Fahrzeug {fahrzeug_id}"
+        prefix = slugify_filename(f"fahrzeug_{fahrzeug_id}_{vehicle_name}")
+        path = build_report_path(prefix, ".html")
+        try:
+            html = self.db.vehicle_lifecycle_report(fahrzeug_id)
+        except ValueError as exc:
+            Messagebox.show_error(str(exc), "Fehler")
+            return
+        path.write_text(html, encoding="utf-8")
+        notify_report_saved(path, "Fahrzeug-Lebenslauf")
 
     def export_html(self) -> None:
         html = self.db.export_products_as_html()

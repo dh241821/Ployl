@@ -2861,9 +2861,14 @@ class DatabaseManager:
         maintenance = self.list_maintenance(produkt_id)
         history = self.product_history(produkt_id)
         vehicle_history: List[sqlite3.Row] = []
+        filtered_vehicle_history: List[sqlite3.Row] = []
         fahrzeug_id = product["fahrzeug_id"]
         if fahrzeug_id:
             vehicle_history = self.vehicle_history(fahrzeug_id)
+            filtered_vehicle_history = self._filter_vehicle_history_for_product(
+                vehicle_history,
+                product,
+            )
 
         qr = qrcode.make(f"produkt:{produkt_id}:{product['seriennummer']}")
         buffer = io.BytesIO()
@@ -2882,7 +2887,7 @@ class DatabaseManager:
 
         html = [
             "<html><head><meta charset='utf-8'>",
-            "<style>body{font-family:Arial,sans-serif;margin:2rem;}table{border-collapse:collapse;width:100%;margin-bottom:1.5rem;}th,td{border:1px solid #ccc;padding:0.5rem;text-align:left;}h1{margin-bottom:0;}h2{margin-top:2rem;}figure{float:right;margin:0 0 1rem 1rem;}</style>",
+            "<style>body{font-family:Arial,sans-serif;margin:2rem;}table{border-collapse:collapse;width:100%;margin-bottom:1.5rem;}th,td{border:1px solid #ccc;padding:0.5rem;text-align:left;}h1{margin-bottom:0;}h2{margin-top:2rem;}figure{float:right;margin:0 0 1rem 1rem;}.hint{color:#555;font-style:italic;margin:0.5rem 0 1rem;}</style>",
             "</head><body>",
             f"<h1>Produkt-Lebenslauf: {product['name']}</h1>",
             "<figure>",
@@ -2979,6 +2984,26 @@ class DatabaseManager:
             vehicle_name = product["fahrzeug_name"] or "zugeordnetes Fahrzeug"
             html.append(f"<section><h2>Fahrzeuglog ({vehicle_name})</h2>")
             html.append(
+                "<p class='hint'>Der vollständige Fahrzeug-Lebenslauf kann direkt aus dem Produktbereich exportiert werden." "</p>"
+            )
+            if filtered_vehicle_history:
+                html.append("<h3>Produktbezogene Ereignisse</h3>")
+                html.append(
+                    table(
+                        filtered_vehicle_history,
+                        ("Zeitstempel", "Aktion", "Benutzer", "Beschreibung"),
+                        lambda row: (
+                            row["zeitstempel"],
+                            row["eintragstyp"],
+                            row["benutzer_name"]
+                            or row["dienstnummer"]
+                            or "",
+                            row["beschreibung"] or "",
+                        ),
+                    )
+                )
+            html.append("<h3>Gesamtes Fahrzeuglog</h3>")
+            html.append(
                 table(
                     vehicle_history,
                     ("Zeitstempel", "Aktion", "Benutzer", "Beschreibung"),
@@ -2996,6 +3021,41 @@ class DatabaseManager:
 
         html.append("</body></html>")
         return "".join(html)
+
+    def _filter_vehicle_history_for_product(
+        self,
+        entries: List[sqlite3.Row],
+        product: sqlite3.Row,
+    ) -> List[sqlite3.Row]:
+        tokens: List[str] = []
+        product_keys = set(product.keys())
+        for key in (
+            "seriennummer",
+            "interne_kennung",
+            "name",
+            "produkt_typ_name",
+            "produkt_modell_name",
+            "typ",
+        ):
+            value = product[key] if key in product_keys else None
+            if value:
+                tokens.append(str(value).lower())
+        filtered: List[sqlite3.Row] = []
+        if not tokens:
+            return filtered
+        for row in entries:
+            text = " ".join(
+                filter(
+                    None,
+                    [
+                        row["beschreibung"],
+                        row["eintragstyp"],
+                    ],
+                )
+            ).lower()
+            if any(token in text for token in tokens):
+                filtered.append(row)
+        return filtered
 
     def vehicle_lifecycle_report(self, fahrzeug_id: int) -> str:
         vehicle = self.get_vehicle(fahrzeug_id)
