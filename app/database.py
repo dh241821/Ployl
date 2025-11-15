@@ -2860,6 +2860,10 @@ class DatabaseManager:
         repairs = self.list_repairs(produkt_id)
         maintenance = self.list_maintenance(produkt_id)
         history = self.product_history(produkt_id)
+        vehicle_history: List[sqlite3.Row] = []
+        fahrzeug_id = product["fahrzeug_id"]
+        if fahrzeug_id:
+            vehicle_history = self.vehicle_history(fahrzeug_id)
 
         qr = qrcode.make(f"produkt:{produkt_id}:{product['seriennummer']}")
         buffer = io.BytesIO()
@@ -2970,6 +2974,25 @@ class DatabaseManager:
             )
         )
         html.append("</section>")
+
+        if vehicle_history:
+            vehicle_name = product["fahrzeug_name"] or "zugeordnetes Fahrzeug"
+            html.append(f"<section><h2>Fahrzeuglog ({vehicle_name})</h2>")
+            html.append(
+                table(
+                    vehicle_history,
+                    ("Zeitstempel", "Aktion", "Benutzer", "Beschreibung"),
+                    lambda row: (
+                        row["zeitstempel"],
+                        row["eintragstyp"],
+                        row["benutzer_name"]
+                        or row["dienstnummer"]
+                        or "",
+                        row["beschreibung"] or "",
+                    ),
+                )
+            )
+            html.append("</section>")
 
         html.append("</body></html>")
         return "".join(html)
