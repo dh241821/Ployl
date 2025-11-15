@@ -5,7 +5,7 @@ from __future__ import annotations
 import calendar
 from datetime import date, datetime
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import shutil
 import sqlite3
@@ -79,9 +79,21 @@ class LoginDialog(ttkb.Toplevel):
         container = ttkb.Frame(self, padding=20)
         container.pack(fill=BOTH, expand=True)
 
-        ttkb.Label(container, text="Benutzername").grid(row=0, column=0, sticky=W, pady=(0, 5))
-        self.username_var = ttkb.StringVar()
-        ttkb.Entry(container, textvariable=self.username_var, width=30).grid(row=1, column=0, sticky=W)
+        self.login_choices = self.db.list_user_identifiers()
+        identifiers = [choice["identifier"] for choice in self.login_choices if choice["identifier"]]
+        self.identifier_var = ttkb.StringVar()
+
+        ttkb.Label(container, text="Dienstnummer").grid(row=0, column=0, sticky=W, pady=(0, 5))
+        self.identifier_box = ttkb.Combobox(
+            container,
+            textvariable=self.identifier_var,
+            values=identifiers,
+            width=30,
+        )
+        self.identifier_box.configure(completevalues=identifiers)
+        self.identifier_box.grid(row=1, column=0, sticky=W)
+        if identifiers:
+            self.identifier_var.set(identifiers[0])
 
         ttkb.Label(container, text="Passwort").grid(row=2, column=0, sticky=W, pady=(10, 5))
         self.password_var = ttkb.StringVar()
@@ -93,15 +105,22 @@ class LoginDialog(ttkb.Toplevel):
         ttkb.Button(button_frame, text="Abbrechen", command=self.on_cancel, bootstyle="secondary").pack(side=LEFT, padx=5)
 
         self.bind("<Return>", lambda _event: self.on_login())
-        self.username_var.set("admin")
+        self.identifier_box.focus_set()
+
+    def _resolve_username(self, identifier: str) -> str:
+        for choice in self.login_choices:
+            if choice["identifier"] == identifier:
+                return choice["username"]
+        return identifier
 
     def on_login(self) -> None:
-        username = self.username_var.get().strip()
+        identifier = self.identifier_var.get().strip()
         password = self.password_var.get()
-        if not username or not password:
-            Messagebox.show_error("Bitte Benutzername und Passwort eingeben", "Anmeldung fehlgeschlagen")
+        if not identifier or not password:
+            Messagebox.show_error("Bitte Dienstnummer und Passwort eingeben", "Anmeldung fehlgeschlagen")
             return
-        user = self.db.authenticate(username, password)
+        username = self._resolve_username(identifier)
+        user = self.db.authenticate(username, password, identifier=identifier)
         if not user:
             Messagebox.show_error("Ungültige Anmeldedaten", "Anmeldung fehlgeschlagen")
             return
@@ -2579,6 +2598,8 @@ class ProductEditor(ttkb.Toplevel):
         informationstext = self.info_text.get("1.0", tk.END).strip()
         status_value = STATUS_LABEL_TO_VALUE.get(self.status_var.get(), "im_dienst")
 
+        was_new = self.produkt_id is None
+
         try:
             produkt_id = self.db.add_or_update_product(
                 produkt_id=self.produkt_id,
@@ -2610,6 +2631,9 @@ class ProductEditor(ttkb.Toplevel):
             return
 
         self.produkt_id = produkt_id
+        if was_new:
+            self.components_tab.persist_pending(produkt_id)
+            self.maintenance_tab.persist_pending(produkt_id)
         self.saved = True
         Messagebox.show_info("Produkt gespeichert", "Erfolg")
         self.components_tab.set_product_id(self.produkt_id)
@@ -2631,6 +2655,8 @@ class ComponentsTab(ttkb.Frame):
         self.produkt_id = produkt_id
         self.component_types = component_types
         self.component_cache: Dict[int, sqlite3.Row] = {}
+        self.pending_components: List[Dict[str, Any]] = []
+        self.pending_cache: Dict[str, Dict[str, Any]] = {}
 
         self.toolbar = ttkb.Frame(self)
         self.toolbar.pack(fill=tk.X, padx=10, pady=10)
@@ -2649,7 +2675,7 @@ class ComponentsTab(ttkb.Frame):
         self.delete_btn.pack(side=LEFT)
 
         columns = [
-            {"text": "ID"},
+            {"text": "Kennung"},
             {"text": "Bezeichnung"},
             {"text": "Typ"},
             {"text": "Seriennummer"},
@@ -2657,12 +2683,10 @@ class ComponentsTab(ttkb.Frame):
         ]
         self.table = Tableview(self, coldata=columns, rowdata=[], pagesize=12)
         self.table.bind("<Double-1>", lambda _event: self.edit_component())
+        self.table.pack(fill=BOTH, expand=True, padx=10, pady=(0, 10))
 
-        self.placeholder = ttkb.Label(
-            self,
-            text="Bitte Produkt speichern, um Komponenten zu verwalten.",
-            bootstyle="secondary",
-        )
+        self.info_label = ttkb.Label(self, text="", bootstyle="secondary", anchor=W)
+        self.info_label.pack(fill=tk.X, padx=10, pady=(0, 10))
 
         self.set_product_id(produkt_id)
 
@@ -2671,17 +2695,16 @@ class ComponentsTab(ttkb.Frame):
         self._update_state()
 
     def _update_state(self) -> None:
-        enabled = bool(self.produkt_id)
-        state = tk.NORMAL if enabled else tk.DISABLED
         for button in (self.add_btn, self.edit_btn, self.delete_btn):
-            button.configure(state=state)
-        if enabled:
-            self.placeholder.pack_forget()
-            self.table.pack(fill=BOTH, expand=True, padx=10, pady=(0, 10))
+            button.configure(state=tk.NORMAL)
+        if self.produkt_id:
+            self.info_label.configure(text="")
             self.refresh()
         else:
-            self.table.pack_forget()
-            self.placeholder.pack(fill=BOTH, expand=True, padx=10, pady=10)
+            self.info_label.configure(
+                text="Komponenten werden nach dem Speichern automatisch mit dem Produkt verknüpft."
+            )
+            self.refresh_pending()
 
     def refresh(self) -> None:
         if not self.produkt_id:
@@ -2692,7 +2715,7 @@ class ComponentsTab(ttkb.Frame):
             self.component_cache[int(row["id"])] = row
             self.table.insert_row(
                 values=(
-                    row["id"],
+                    str(row["id"]),
                     row["name"],
                     row["komponententyp_name"] or "",
                     row["seriennummer"] or "",
@@ -2700,37 +2723,88 @@ class ComponentsTab(ttkb.Frame):
                 )
             )
 
-    def selected_component_id(self) -> Optional[int]:
+    def refresh_pending(self) -> None:
+        self.table.delete_rows()
+        self.pending_cache = {}
+        for index, record in enumerate(self.pending_components, start=1):
+            key = f"neu-{index}"
+            self.pending_cache[key] = {"index": index - 1, "data": record}
+            self.table.insert_row(
+                values=(
+                    key,
+                    record.get("name", ""),
+                    record.get("komponententyp_name", ""),
+                    record.get("seriennummer", ""),
+                    record.get("bemerkung", ""),
+                )
+            )
+
+    def selected_component_key(self) -> Optional[str]:
         rows = self.table.get_rows("selected")
         if not rows:
             Messagebox.show_info("Bitte Komponente auswählen", "Hinweis")
             return None
-        return int(rows[0].values[0])
+        return str(rows[0].values[0])
+
+    def _resolve_component_type_name(self, type_id: Optional[int]) -> str:
+        if not type_id:
+            return ""
+        for row in self.component_types:
+            if row["id"] == type_id:
+                return row["name"]
+        return ""
 
     def add_component(self) -> None:
-        if not self.produkt_id:
-            return
         dialog = ComponentFormDialog(self, "Komponente hinzufügen", self.component_types)
         self.wait_window(dialog)
         if not dialog.result:
             return
         data = dialog.result
-        self.db.add_or_update_component(
-            komponent_id=None,
-            produkt_id=self.produkt_id,
-            name=data["name"],
-            hersteller=data["hersteller"],
-            seriennummer=data["seriennummer"],
-            anschaffungsdatum=data["anschaffungsdatum"],
-            bemerkung=data["bemerkung"],
-            komponententyp_id=data["komponententyp_id"],
-        )
-        self.refresh()
+        type_name = self._resolve_component_type_name(data["komponententyp_id"])
+        if self.produkt_id:
+            self.db.add_or_update_component(
+                komponent_id=None,
+                produkt_id=self.produkt_id,
+                name=data["name"],
+                hersteller=data["hersteller"],
+                seriennummer=data["seriennummer"],
+                anschaffungsdatum=data["anschaffungsdatum"],
+                bemerkung=data["bemerkung"],
+                komponententyp_id=data["komponententyp_id"],
+            )
+            self.refresh()
+        else:
+            record = dict(data)
+            record["komponententyp_name"] = type_name
+            anschaffung = record.get("anschaffungsdatum")
+            record["anschaffungsdatum"] = anschaffung.isoformat() if anschaffung else None
+            self.pending_components.append(record)
+            self.refresh_pending()
 
     def edit_component(self) -> None:
-        component_id = self.selected_component_id()
-        if not component_id:
+        key = self.selected_component_key()
+        if not key:
             return
+        if key.startswith("neu-"):
+            pending = self.pending_cache.get(key)
+            if not pending:
+                return
+            record = dict(pending["data"])
+            dialog = ComponentFormDialog(self, "Komponente bearbeiten", self.component_types, record)
+            self.wait_window(dialog)
+            if not dialog.result:
+                return
+            data = dialog.result
+            type_name = self._resolve_component_type_name(data["komponententyp_id"])
+            updated = dict(data)
+            updated["komponententyp_name"] = type_name
+            anschaffung = updated.get("anschaffungsdatum")
+            updated["anschaffungsdatum"] = anschaffung.isoformat() if anschaffung else None
+            self.pending_components[pending["index"]] = updated
+            self.refresh_pending()
+            return
+
+        component_id = int(key)
         row = self.component_cache.get(component_id)
         if not row:
             return
@@ -2741,7 +2815,7 @@ class ComponentsTab(ttkb.Frame):
         data = dialog.result
         self.db.add_or_update_component(
             komponent_id=component_id,
-            produkt_id=row["produkt_id"],
+            produkt_id=self.produkt_id,
             name=data["name"],
             hersteller=data["hersteller"],
             seriennummer=data["seriennummer"],
@@ -2752,13 +2826,46 @@ class ComponentsTab(ttkb.Frame):
         self.refresh()
 
     def delete_component(self) -> None:
-        component_id = self.selected_component_id()
-        if not component_id:
+        key = self.selected_component_key()
+        if not key:
             return
+        if key.startswith("neu-"):
+            pending = self.pending_cache.get(key)
+            if not pending:
+                return
+            if Messagebox.okcancel("Komponente wirklich entfernen?", "Bestätigung") != "OK":
+                return
+            del self.pending_components[pending["index"]]
+            self.refresh_pending()
+            return
+
+        component_id = int(key)
         if Messagebox.okcancel("Komponente wirklich entfernen?", "Bestätigung", alert=True) != "OK":
             return
         self.db.delete_component(component_id)
         self.refresh()
+
+    def persist_pending(self, produkt_id: int) -> None:
+        if not self.pending_components:
+            return
+        for record in self.pending_components:
+            anschaffungsdatum = (
+                datetime.strptime(record["anschaffungsdatum"], "%Y-%m-%d").date()
+                if record.get("anschaffungsdatum")
+                else None
+            )
+            self.db.add_or_update_component(
+                komponent_id=None,
+                produkt_id=produkt_id,
+                name=record.get("name", ""),
+                hersteller=record.get("hersteller", ""),
+                seriennummer=record.get("seriennummer", ""),
+                anschaffungsdatum=anschaffungsdatum,
+                bemerkung=record.get("bemerkung", ""),
+                komponententyp_id=record.get("komponententyp_id"),
+            )
+        self.pending_components.clear()
+        self.pending_cache = {}
 
 
 class ComponentFormDialog(ttkb.Toplevel):
@@ -2872,6 +2979,8 @@ class MaintenanceTab(ttkb.Frame):
         self.db = db
         self.produkt_id = produkt_id
         self.maintenance_cache: Dict[int, sqlite3.Row] = {}
+        self.pending_maintenances: List[Dict[str, Any]] = []
+        self.pending_cache: Dict[str, Dict[str, Any]] = {}
 
         self.toolbar = ttkb.Frame(self)
         self.toolbar.pack(fill=tk.X, padx=10, pady=10)
@@ -2890,7 +2999,7 @@ class MaintenanceTab(ttkb.Frame):
         self.delete_btn.pack(side=LEFT)
 
         columns = [
-            {"text": "ID"},
+            {"text": "Kennung"},
             {"text": "Geplanter Termin"},
             {"text": "Typ"},
             {"text": "Durchgeführt"},
@@ -2898,12 +3007,10 @@ class MaintenanceTab(ttkb.Frame):
         ]
         self.table = Tableview(self, coldata=columns, rowdata=[], pagesize=12)
         self.table.bind("<Double-1>", lambda _event: self.edit_maintenance())
+        self.table.pack(fill=BOTH, expand=True, padx=10, pady=(0, 10))
 
-        self.placeholder = ttkb.Label(
-            self,
-            text="Bitte Produkt speichern, um Wartungen zu verwalten.",
-            bootstyle="secondary",
-        )
+        self.info_label = ttkb.Label(self, text="", bootstyle="secondary", anchor=W)
+        self.info_label.pack(fill=tk.X, padx=10, pady=(0, 10))
 
         self.set_product_id(produkt_id)
 
@@ -2912,17 +3019,16 @@ class MaintenanceTab(ttkb.Frame):
         self._update_state()
 
     def _update_state(self) -> None:
-        enabled = bool(self.produkt_id)
-        state = tk.NORMAL if enabled else tk.DISABLED
         for button in (self.add_btn, self.edit_btn, self.delete_btn):
-            button.configure(state=state)
-        if enabled:
-            self.placeholder.pack_forget()
-            self.table.pack(fill=BOTH, expand=True, padx=10, pady=(0, 10))
+            button.configure(state=tk.NORMAL)
+        if self.produkt_id:
+            self.info_label.configure(text="")
             self.refresh()
         else:
-            self.table.pack_forget()
-            self.placeholder.pack(fill=BOTH, expand=True, padx=10, pady=10)
+            self.info_label.configure(
+                text="Wartungen werden nach dem Speichern automatisch zum Produkt hinzugefügt."
+            )
+            self.refresh_pending()
 
     def refresh(self) -> None:
         if not self.produkt_id:
@@ -2933,7 +3039,7 @@ class MaintenanceTab(ttkb.Frame):
             self.maintenance_cache[int(row["id"])] = row
             self.table.insert_row(
                 values=(
-                    row["id"],
+                    str(row["id"]),
                     format_date(row["geplanter_termin"]),
                     row["wartungstyp"],
                     format_date(row["durchgefuehrt_am"]),
@@ -2941,37 +3047,99 @@ class MaintenanceTab(ttkb.Frame):
                 )
             )
 
-    def selected_maintenance_id(self) -> Optional[int]:
+    def refresh_pending(self) -> None:
+        self.table.delete_rows()
+        self.pending_cache = {}
+        for index, record in enumerate(self.pending_maintenances, start=1):
+            key = f"neu-{index}"
+            self.pending_cache[key] = {"index": index - 1, "data": record}
+            self.table.insert_row(
+                values=(
+                    key,
+                    self._format_iso(record.get("geplanter_termin")),
+                    record.get("wartungstyp", ""),
+                    self._format_iso(record.get("durchgefuehrt_am")),
+                    record.get("beschreibung", ""),
+                )
+            )
+
+    @staticmethod
+    def _format_iso(value: Optional[str]) -> str:
+        if not value:
+            return ""
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").strftime(DATE_FORMAT)
+        except ValueError:
+            return value
+
+    def selected_maintenance_key(self) -> Optional[str]:
         rows = self.table.get_rows("selected")
         if not rows:
             Messagebox.show_info("Bitte Wartung auswählen", "Hinweis")
             return None
-        return int(rows[0].values[0])
+        return str(rows[0].values[0])
 
     def add_maintenance(self) -> None:
-        if not self.produkt_id:
-            return
         dialog = MaintenanceFormDialog(self, "Wartung planen")
         self.wait_window(dialog)
         if not dialog.result:
             return
         data = dialog.result
-        self.db.add_or_update_maintenance(
-            wartung_id=None,
-            produkt_id=self.produkt_id,
-            geplanter_termin=data["geplanter_termin"],
-            wartungstyp=data["wartungstyp"],
-            beschreibung=data["beschreibung"],
-            durchgefuehrt_am=data["durchgefuehrt_am"],
-            durchgefuehrt_von=data["durchgefuehrt_von"],
-            bemerkung=data["bemerkung"],
-        )
-        self.refresh()
+        if self.produkt_id:
+            self.db.add_or_update_maintenance(
+                wartung_id=None,
+                produkt_id=self.produkt_id,
+                geplanter_termin=data["geplanter_termin"],
+                wartungstyp=data["wartungstyp"],
+                beschreibung=data["beschreibung"],
+                durchgefuehrt_am=data["durchgefuehrt_am"],
+                durchgefuehrt_von=data["durchgefuehrt_von"],
+                bemerkung=data["bemerkung"],
+            )
+            self.refresh()
+        else:
+            record = {
+                "geplanter_termin": data["geplanter_termin"].isoformat(),
+                "wartungstyp": data["wartungstyp"],
+                "beschreibung": data["beschreibung"],
+                "durchgefuehrt_am": data["durchgefuehrt_am"].isoformat()
+                if data["durchgefuehrt_am"]
+                else None,
+                "durchgefuehrt_von": data["durchgefuehrt_von"],
+                "bemerkung": data["bemerkung"],
+            }
+            self.pending_maintenances.append(record)
+            self.refresh_pending()
 
     def edit_maintenance(self) -> None:
-        wartung_id = self.selected_maintenance_id()
-        if not wartung_id:
+        key = self.selected_maintenance_key()
+        if not key:
             return
+        if key.startswith("neu-"):
+            pending = self.pending_cache.get(key)
+            if not pending:
+                return
+            record = dict(pending["data"])
+            dialog = MaintenanceFormDialog(self, "Wartung bearbeiten", record)
+            self.wait_window(dialog)
+            if not dialog.result:
+                return
+            data = dialog.result
+            updated = {
+                "geplanter_termin": data["geplanter_termin"].isoformat(),
+                "wartungstyp": data["wartungstyp"],
+                "beschreibung": data["beschreibung"],
+                "durchgefuehrt_am": data["durchgefuehrt_am"].isoformat()
+                if data["durchgefuehrt_am"]
+                else None,
+                "durchgefuehrt_von": data["durchgefuehrt_von"],
+                "bemerkung": data["bemerkung"],
+            }
+            self.pending_maintenances[pending["index"]] = updated
+            self.refresh_pending()
+            return
+
+        wartung_id = int(key)
         row = self.maintenance_cache.get(wartung_id)
         if not row:
             return
@@ -2982,7 +3150,7 @@ class MaintenanceTab(ttkb.Frame):
         data = dialog.result
         self.db.add_or_update_maintenance(
             wartung_id=wartung_id,
-            produkt_id=row["produkt_id"],
+            produkt_id=self.produkt_id,
             geplanter_termin=data["geplanter_termin"],
             wartungstyp=data["wartungstyp"],
             beschreibung=data["beschreibung"],
@@ -2993,15 +3161,47 @@ class MaintenanceTab(ttkb.Frame):
         self.refresh()
 
     def delete_maintenance(self) -> None:
-        wartung_id = self.selected_maintenance_id()
-        if not wartung_id:
+        key = self.selected_maintenance_key()
+        if not key:
             return
+        if key.startswith("neu-"):
+            pending = self.pending_cache.get(key)
+            if not pending:
+                return
+            if Messagebox.okcancel("Wartung wirklich entfernen?", "Bestätigung") != "OK":
+                return
+            del self.pending_maintenances[pending["index"]]
+            self.refresh_pending()
+            return
+
+        wartung_id = int(key)
         if Messagebox.okcancel("Wartung wirklich löschen?", "Bestätigung", alert=True) != "OK":
             return
         self.db.delete_maintenance(wartung_id)
         self.refresh()
 
-
+    def persist_pending(self, produkt_id: int) -> None:
+        if not self.pending_maintenances:
+            return
+        for record in self.pending_maintenances:
+            geplanter = datetime.strptime(record["geplanter_termin"], "%Y-%m-%d").date()
+            durchgefuehrt = (
+                datetime.strptime(record["durchgefuehrt_am"], "%Y-%m-%d").date()
+                if record.get("durchgefuehrt_am")
+                else None
+            )
+            self.db.add_or_update_maintenance(
+                wartung_id=None,
+                produkt_id=produkt_id,
+                geplanter_termin=geplanter,
+                wartungstyp=record.get("wartungstyp", ""),
+                beschreibung=record.get("beschreibung", ""),
+                durchgefuehrt_am=durchgefuehrt,
+                durchgefuehrt_von=record.get("durchgefuehrt_von", ""),
+                bemerkung=record.get("bemerkung", ""),
+            )
+        self.pending_maintenances.clear()
+        self.pending_cache = {}
 class MaintenanceFormDialog(ttkb.Toplevel):
     def __init__(
         self, master: tk.Misc, title: str, data: Optional[sqlite3.Row] = None

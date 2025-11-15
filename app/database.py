@@ -472,16 +472,46 @@ class DatabaseManager:
             return None
         return value.isoformat()
 
-    def authenticate(self, username: str, password: str) -> Optional[User]:
-        row = self.connection.execute(
-            "SELECT id, username, full_name, role, password_hash FROM benutzer WHERE username = ?",
-            (username,),
-        ).fetchone()
+    def authenticate(
+        self, username: str, password: str, *, identifier: Optional[str] = None
+    ) -> Optional[User]:
+        row: Optional[sqlite3.Row] = None
+        if identifier:
+            row = self.connection.execute(
+                """
+                SELECT id, username, full_name, role, password_hash
+                FROM benutzer
+                WHERE dienstnummer = ? COLLATE NOCASE
+                """,
+                (identifier,),
+            ).fetchone()
+        if not row:
+            row = self.connection.execute(
+                "SELECT id, username, full_name, role, password_hash FROM benutzer WHERE username = ?",
+                (username,),
+            ).fetchone()
         if not row:
             return None
         if row["password_hash"] != self.hash_password(password):
             return None
         return User(id=row["id"], username=row["username"], full_name=row["full_name"], role=row["role"])
+
+    def list_user_identifiers(self) -> List[Dict[str, str]]:
+        rows = self.connection.execute(
+            """
+            SELECT username, full_name, COALESCE(dienstnummer, username) AS identifier
+            FROM benutzer
+            ORDER BY identifier COLLATE NOCASE
+            """
+        ).fetchall()
+        return [
+            {
+                "username": row["username"],
+                "full_name": row["full_name"],
+                "identifier": row["identifier"] or row["username"],
+            }
+            for row in rows
+        ]
 
     # ------------------------------------------------------------------
     # category and location management
