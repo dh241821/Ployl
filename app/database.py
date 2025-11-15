@@ -6,11 +6,15 @@ import base64
 import contextlib
 import hashlib
 import io
+import shutil
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 import qrcode
 
@@ -405,9 +409,13 @@ class DatabaseManager:
         self._ensure_column("fahrzeuge", "marke_id", "INTEGER REFERENCES fahrzeug_marken(id)")
         self._ensure_column("fahrzeuge", "fahrzeugtyp_id", "INTEGER REFERENCES fahrzeug_modelle(id)")
         self._ensure_column("fahrzeuge", "fahrzeugkategorie_id", "INTEGER REFERENCES fahrzeug_kategorien(id)")
+        self._ensure_column("fahrzeuge", "fahrgestellnummer", "TEXT")
 
         self._ensure_column("produkt_komponenten", "komponententyp_id", "INTEGER REFERENCES komponententypen(id)")
         self._ensure_column("reparaturen", "reparatur_art_id", "INTEGER REFERENCES reparatur_arten(id)")
+
+        self._ensure_column("produkt_log", "benutzer_id", "INTEGER REFERENCES benutzer(id)")
+        self._ensure_column("fahrzeug_log", "benutzer_id", "INTEGER REFERENCES benutzer(id)")
 
         self._ensure_column("benutzer", "vorname", "TEXT")
         self._ensure_column("benutzer", "nachname", "TEXT")
@@ -1103,6 +1111,29 @@ class DatabaseManager:
             )
         )
 
+    def get_vehicle(self, fahrzeug_id: int) -> Optional[sqlite3.Row]:
+        return self.connection.execute(
+            """
+            SELECT f.*,
+                   s.land AS standort_land,
+                   s.bereich AS standort_bereich,
+                   s.bezirk AS standort_bezirk,
+                   s.bezirksstelle AS standort_bezirksstelle,
+                   s.ortsstelle AS standort_ortsstelle,
+                   COALESCE(s.ortsstelle, s.bezirksstelle, s.bezirk, s.bereich, s.land, '') AS standort_name,
+                   fm.name AS marke_name,
+                   fmo.name AS fahrzeug_typ_name,
+                   fk.name AS fahrzeug_kategorie_name
+            FROM fahrzeuge AS f
+            LEFT JOIN standorte AS s ON s.id = f.standort_id
+            LEFT JOIN fahrzeug_marken AS fm ON fm.id = f.marke_id
+            LEFT JOIN fahrzeug_modelle AS fmo ON fmo.id = f.fahrzeugtyp_id
+            LEFT JOIN fahrzeug_kategorien AS fk ON fk.id = f.fahrzeugkategorie_id
+            WHERE f.id = ?
+            """,
+            (fahrzeug_id,),
+        ).fetchone()
+
     def add_or_update_vehicle(
         self,
         *,
@@ -1121,6 +1152,8 @@ class DatabaseManager:
         fahrzeugkategorie_id: Optional[int],
         ausserbetrieb: bool,
         ausserbetriebnahme: Optional[date],
+        fahrgestellnummer: str,
+        user_id: Optional[int] = None,
     ) -> int:
         with self.connection:
             inbetriebnahme_str = self._format_date(inbetriebnahme)
@@ -1133,7 +1166,7 @@ class DatabaseManager:
                     SET name = ?, kennzeichen = ?, marke = ?, typ = ?, kategorie = ?,
                         inbetriebnahme = ?, standort_id = ?, kilometerstand = ?, status = ?,
                         marke_id = ?, fahrzeugtyp_id = ?, fahrzeugkategorie_id = ?,
-                        ausserbetrieb = ?, ausserbetriebnahme_datum = ?
+                        ausserbetrieb = ?, ausserbetriebnahme_datum = ?, fahrgestellnummer = ?
                     WHERE id = ?
                     """,
                     (
@@ -1151,19 +1184,25 @@ class DatabaseManager:
                         fahrzeugkategorie_id,
                         ausserbetrieb_flag,
                         ausserbetrieb_str,
+                        fahrgestellnummer,
                         fahrzeug_id,
                     ),
                 )
-                self.add_vehicle_log(fahrzeug_id, "aktualisiert", "Fahrzeugdaten aktualisiert")
+                self.add_vehicle_log(
+                    fahrzeug_id,
+                    "aktualisiert",
+                    "Fahrzeugdaten aktualisiert",
+                    benutzer_id=user_id,
+                )
                 return fahrzeug_id
             cur = self.connection.execute(
                 """
                 INSERT INTO fahrzeuge (
                     name, kennzeichen, marke, typ, kategorie, inbetriebnahme, standort_id,
                     kilometerstand, status, marke_id, fahrzeugtyp_id, fahrzeugkategorie_id,
-                    ausserbetrieb, ausserbetriebnahme_datum
+                    ausserbetrieb, ausserbetriebnahme_datum, fahrgestellnummer
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -1180,26 +1219,89 @@ class DatabaseManager:
                     fahrzeugkategorie_id,
                     ausserbetrieb_flag,
                     ausserbetrieb_str,
+                    fahrgestellnummer,
                 ),
             )
             new_id = int(cur.lastrowid)
-            self.add_vehicle_log(new_id, "angelegt", "Fahrzeug erstellt")
+            self.add_vehicle_log(new_id, "angelegt", "Fahrzeug erstellt", benutzer_id=user_id)
             return new_id
 
-    def add_vehicle_log(self, fahrzeug_id: int, eintragstyp: str, beschreibung: str) -> None:
+    def add_vehicle_log(
+        self,
+        fahrzeug_id: int,
+        eintragstyp: str,
+        beschreibung: str,
+        *,
+        benutzer_id: Optional[int] = None,
+    ) -> None:
         with self.connection:
             self.connection.execute(
-                "INSERT INTO fahrzeug_log (fahrzeug_id, eintragstyp, beschreibung, zeitstempel) VALUES (?, ?, ?, ?)",
-                (fahrzeug_id, eintragstyp, beschreibung, datetime.now().isoformat()),
+                """
+                INSERT INTO fahrzeug_log (fahrzeug_id, eintragstyp, beschreibung, zeitstempel, benutzer_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (fahrzeug_id, eintragstyp, beschreibung, datetime.now().isoformat(), benutzer_id),
             )
 
     def vehicle_history(self, fahrzeug_id: int) -> List[sqlite3.Row]:
         return list(
             self.connection.execute(
-                "SELECT * FROM fahrzeug_log WHERE fahrzeug_id = ? ORDER BY zeitstempel DESC",
+                """
+                SELECT fl.*, b.full_name AS benutzer_name, b.dienstnummer
+                FROM fahrzeug_log AS fl
+                LEFT JOIN benutzer AS b ON b.id = fl.benutzer_id
+                WHERE fl.fahrzeug_id = ?
+                ORDER BY fl.zeitstempel DESC
+                """,
                 (fahrzeug_id,),
             )
         )
+
+    def list_products_for_vehicle(self, fahrzeug_id: int) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                """
+                SELECT p.id, p.name, p.typ, p.seriennummer, p.status,
+                       k.name AS kategorie_name,
+                       pt.name AS produkt_typ_name,
+                       pm.name AS produkt_modell_name
+                FROM produkte AS p
+                LEFT JOIN kategorien AS k ON k.id = p.kategorie_id
+                LEFT JOIN produkt_typen AS pt ON pt.id = p.produkt_typ_id
+                LEFT JOIN produkt_modelle AS pm ON pm.id = p.produkt_modell_id
+                WHERE p.fahrzeug_id = ?
+                ORDER BY p.name
+                """,
+                (fahrzeug_id,),
+            )
+        )
+
+    def transfer_vehicle_products(
+        self,
+        source_vehicle_id: int,
+        target_vehicle_id: Optional[int],
+        *,
+        user_id: Optional[int] = None,
+    ) -> int:
+        with self.connection:
+            rows = self.connection.execute(
+                "SELECT id FROM produkte WHERE fahrzeug_id = ?",
+                (source_vehicle_id,),
+            ).fetchall()
+            product_ids = [int(row["id"]) for row in rows]
+            self.connection.execute(
+                "UPDATE produkte SET fahrzeug_id = ? WHERE fahrzeug_id = ?",
+                (target_vehicle_id, source_vehicle_id),
+            )
+        for produkt_id in product_ids:
+            ziel_text = "kein Fahrzeug" if not target_vehicle_id else f"Fahrzeug {target_vehicle_id}"
+            self.add_product_log(
+                produkt_id,
+                "verschoben",
+                f"Produkt auf {ziel_text} übertragen",
+                benutzer_id=user_id,
+            )
+        return len(product_ids)
 
     # ------------------------------------------------------------------
     # product management
@@ -1286,6 +1388,7 @@ class DatabaseManager:
         produkt_modell_id: Optional[int],
         produkt_hersteller_id: Optional[int],
         informationstext: str,
+        user_id: Optional[int] = None,
     ) -> int:
         anschaffungsdatum_str = self._format_date(anschaffungsdatum)
         letzte_stk_str = self._format_date(letzte_stk)
@@ -1333,7 +1436,12 @@ class DatabaseManager:
                         produkt_id,
                     ),
                 )
-                self.add_product_log(produkt_id, "aktualisiert", "Produktdaten aktualisiert")
+                self.add_product_log(
+                    produkt_id,
+                    "aktualisiert",
+                    "Produktdaten aktualisiert",
+                    benutzer_id=user_id,
+                )
                 return produkt_id
             values = (
                 name,
@@ -1374,10 +1482,107 @@ class DatabaseManager:
                 values,
             )
             new_id = int(cur.lastrowid)
-            self.add_product_log(new_id, "angelegt", "Produkt erstellt")
+            self.add_product_log(new_id, "angelegt", "Produkt erstellt", benutzer_id=user_id)
             return new_id
 
-    def mark_product_retired(self, produkt_id: int, datum: date, grund: str) -> None:
+    def bulk_add_products(
+        self,
+        serial_numbers: List[str],
+        *,
+        name: str,
+        typ: str,
+        hersteller: str,
+        anschaffungsdatum: Optional[date],
+        kategorie_id: Optional[int],
+        standort_id: Optional[int],
+        fahrzeug_id: Optional[int],
+        status: str,
+        interne_kennung_prefix: str,
+        stk_intervall: int,
+        mtk_intervall: int,
+        stk_aktiv: bool,
+        mtk_aktiv: bool,
+        letzte_stk: Optional[date],
+        letzte_mtk: Optional[date],
+        naechste_stk: Optional[date],
+        naechste_mtk: Optional[date],
+        lagerort: str,
+        produkt_typ_id: Optional[int],
+        produkt_modell_id: Optional[int],
+        produkt_hersteller_id: Optional[int],
+        informationstext: str,
+        user_id: Optional[int] = None,
+    ) -> Tuple[int, List[str]]:
+        created = 0
+        errors: List[str] = []
+        serials = [serial.strip() for serial in serial_numbers if serial.strip()]
+        if not serials:
+            return 0, ["Keine gültigen Seriennummern übergeben."]
+
+        typ_label = typ
+        if produkt_typ_id:
+            row = self.connection.execute(
+                "SELECT name FROM produkt_typen WHERE id = ?",
+                (produkt_typ_id,),
+            ).fetchone()
+            if row and row["name"]:
+                typ_label = row["name"]
+        model_label = ""
+        if produkt_modell_id:
+            row = self.connection.execute(
+                "SELECT name FROM produkt_modelle WHERE id = ?",
+                (produkt_modell_id,),
+            ).fetchone()
+            if row and row["name"]:
+                model_label = row["name"]
+
+        base_name = name.strip()
+        if not base_name:
+            base_name = " ".join(part for part in (typ_label, model_label) if part)
+
+        for serial in serials:
+            try:
+                current_name = base_name or serial
+                interne = interne_kennung_prefix.strip()
+                if interne:
+                    interne = f"{interne}-{serial}"
+                self.add_or_update_product(
+                    produkt_id=None,
+                    name=current_name,
+                    typ=typ_label or typ,
+                    seriennummer=serial,
+                    hersteller=hersteller,
+                    anschaffungsdatum=anschaffungsdatum,
+                    kategorie_id=kategorie_id,
+                    standort_id=standort_id,
+                    fahrzeug_id=fahrzeug_id,
+                    status=status,
+                    interne_kennung=interne,
+                    stk_intervall=stk_intervall,
+                    mtk_intervall=mtk_intervall,
+                    stk_aktiv=stk_aktiv,
+                    mtk_aktiv=mtk_aktiv,
+                    letzte_stk=letzte_stk,
+                    letzte_mtk=letzte_mtk,
+                    naechste_stk=naechste_stk,
+                    naechste_mtk=naechste_mtk,
+                    lagerort=lagerort,
+                    produkt_typ_id=produkt_typ_id,
+                    produkt_modell_id=produkt_modell_id,
+                    produkt_hersteller_id=produkt_hersteller_id,
+                    informationstext=informationstext,
+                    user_id=user_id,
+                )
+                created += 1
+            except sqlite3.IntegrityError:
+                errors.append(f"Seriennummer bereits vorhanden: {serial}")
+            except Exception as exc:  # pragma: no cover
+                errors.append(f"{serial}: {exc}")
+        return created, errors
+
+    def mark_product_retired(
+        self, produkt_id: int, datum: date, grund: str, *, user_id: Optional[int] = None
+    ) -> None:
         with self.connection:
             self.connection.execute(
                 "UPDATE produkte SET status = 'ausgeschieden' WHERE id = ?",
@@ -1387,19 +1592,35 @@ class DatabaseManager:
                 "INSERT INTO ausscheidungen (produkt_id, datum, grund) VALUES (?, ?, ?)",
                 (produkt_id, datum.isoformat(), grund),
             )
-            self.add_product_log(produkt_id, "ausgeschieden", grund)
+            self.add_product_log(produkt_id, "ausgeschieden", grund, benutzer_id=user_id)
 
-    def add_product_log(self, produkt_id: int, eintragstyp: str, beschreibung: str) -> None:
+    def add_product_log(
+        self,
+        produkt_id: int,
+        eintragstyp: str,
+        beschreibung: str,
+        *,
+        benutzer_id: Optional[int] = None,
+    ) -> None:
         with self.connection:
             self.connection.execute(
-                "INSERT INTO produkt_log (produkt_id, eintragstyp, beschreibung, zeitstempel) VALUES (?, ?, ?, ?)",
-                (produkt_id, eintragstyp, beschreibung, datetime.now().isoformat()),
+                """
+                INSERT INTO produkt_log (produkt_id, eintragstyp, beschreibung, zeitstempel, benutzer_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (produkt_id, eintragstyp, beschreibung, datetime.now().isoformat(), benutzer_id),
             )
 
     def product_history(self, produkt_id: int) -> List[sqlite3.Row]:
         return list(
             self.connection.execute(
-                "SELECT * FROM produkt_log WHERE produkt_id = ? ORDER BY zeitstempel DESC",
+                """
+                SELECT pl.*, b.full_name AS benutzer_name, b.dienstnummer
+                FROM produkt_log AS pl
+                LEFT JOIN benutzer AS b ON b.id = pl.benutzer_id
+                WHERE pl.produkt_id = ?
+                ORDER BY pl.zeitstempel DESC
+                """,
                 (produkt_id,),
             )
         )
@@ -1511,10 +1732,93 @@ class DatabaseManager:
         html.append(
             table(
                 history,
-                ("Zeitstempel", "Aktion", "Beschreibung"),
+                ("Zeitstempel", "Aktion", "Benutzer", "Beschreibung"),
                 lambda row: (
                     row["zeitstempel"],
                     row["eintragstyp"],
+                    row["benutzer_name"]
+                    or row["dienstnummer"]
+                    or "",
+                    row["beschreibung"] or "",
+                ),
+            )
+        )
+        html.append("</section>")
+
+        html.append("</body></html>")
+        return "".join(html)
+
+    def vehicle_lifecycle_report(self, fahrzeug_id: int) -> str:
+        vehicle = self.get_vehicle(fahrzeug_id)
+        if not vehicle:
+            raise ValueError("Fahrzeug nicht gefunden")
+
+        products = self.list_products_for_vehicle(fahrzeug_id)
+        history = self.vehicle_history(fahrzeug_id)
+
+        def table(rows: List[sqlite3.Row], headers: Tuple[str, ...], row_builder) -> str:
+            if not rows:
+                return "<p>Keine Daten vorhanden.</p>"
+            head_html = "".join(f"<th>{header}</th>" for header in headers)
+            body_html = "".join(
+                "<tr>" + "".join(f"<td>{value}</td>" for value in row_builder(row)) + "</tr>"
+                for row in rows
+            )
+            return f"<table class='data'><thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>"
+
+        html = [
+            "<html><head><meta charset='utf-8'>",
+            "<style>body{font-family:Arial,sans-serif;margin:2rem;}table{border-collapse:collapse;width:100%;margin-bottom:1.5rem;}"
+            "th,td{border:1px solid #ccc;padding:0.5rem;text-align:left;}h1{margin-bottom:0;}h2{margin-top:2rem;}"
+            "</style>",
+            "</head><body>",
+            f"<h1>Fahrzeug-Lebenslauf: {vehicle['name']}</h1>",
+            "<section>",
+            "<h2>Fahrzeugdetails</h2>",
+            "<table class='data'><tbody>",
+        ]
+
+        detail_rows = [
+            ("Funkkennung", vehicle["name"] or ""),
+            ("Kennzeichen", vehicle["kennzeichen"] or ""),
+            ("Marke", vehicle["marke_name"] or vehicle["marke"] or ""),
+            ("Typ", vehicle["fahrzeug_typ_name"] or vehicle["typ"] or ""),
+            ("Kategorie", vehicle["fahrzeug_kategorie_name"] or vehicle["kategorie"] or ""),
+            ("Fahrgestellnummer", vehicle["fahrgestellnummer"] or ""),
+            ("Inbetriebnahme", vehicle["inbetriebnahme"] or ""),
+            ("Außerbetriebnahme", vehicle["ausserbetriebnahme_datum"] or ""),
+            ("Status", STATUS_LABELS.get(vehicle["status"], vehicle["status"])),
+            ("Kilometerstand", vehicle["kilometerstand"] or ""),
+            ("Standort", vehicle["standort_name"] or ""),
+        ]
+        html.extend(f"<tr><th>{label}</th><td>{value}</td></tr>" for label, value in detail_rows)
+        html.append("</tbody></table></section>")
+
+        html.append("<section><h2>Zugeordnete Produkte</h2>")
+        html.append(
+            table(
+                products,
+                ("Produkt", "Typ", "Seriennummer", "Status", "Kategorie"),
+                lambda row: (
+                    row["name"],
+                    row["produkt_typ_name"] or row["typ"] or "",
+                    row["seriennummer"],
+                    STATUS_LABELS.get(row["status"], row["status"]),
+                    row["kategorie_name"] or "",
+                ),
+            )
+        )
+        html.append("</section>")
+
+        html.append("<section><h2>Verlauf</h2>")
+        html.append(
+            table(
+                history,
+                ("Zeitstempel", "Aktion", "Benutzer", "Beschreibung"),
+                lambda row: (
+                    row["zeitstempel"],
+                    row["eintragstyp"],
+                    row["benutzer_name"] or row["dienstnummer"] or "",
                     row["beschreibung"] or "",
                 ),
             )
@@ -1617,6 +1921,7 @@ class DatabaseManager:
         kontakt_id: Optional[int],
         beschreibung: str,
         reparatur_art_id: Optional[int],
+        user_id: Optional[int] = None,
     ) -> int:
         with self.connection:
             cur = self.connection.execute(
@@ -1637,7 +1942,12 @@ class DatabaseManager:
                 "UPDATE produkte SET status = 'in_reparatur' WHERE id = ?",
                 (produkt_id,),
             )
-            self.add_product_log(produkt_id, "reparatur", beschreibung)
+            self.add_product_log(
+                produkt_id,
+                "reparatur",
+                beschreibung,
+                benutzer_id=user_id,
+            )
             return int(cur.lastrowid)
 
     def delete_component(self, komponent_id: int) -> None:
@@ -1726,6 +2036,41 @@ class DatabaseManager:
                 (name, kategorie_id, lagerort, soll_bestand, ist_bestand, verfallsdatum_str),
             )
             return int(cur.lastrowid)
+
+    def material_statistics(self) -> Dict[str, Any]:
+        total_items = self.connection.execute(
+            "SELECT COUNT(*) FROM verbrauchsmaterial"
+        ).fetchone()[0]
+        total_bestand = self.connection.execute(
+            "SELECT COALESCE(SUM(ist_bestand), 0) FROM verbrauchsmaterial"
+        ).fetchone()[0]
+        categories = [
+            (
+                row["name"],
+                int(row["anzahl"] or 0),
+                int(row["bestand"] or 0),
+            )
+            for row in self.connection.execute(
+                """
+                SELECT COALESCE(k.name, 'Ohne Kategorie') AS name,
+                       COUNT(*) AS anzahl,
+                       COALESCE(SUM(m.ist_bestand), 0) AS bestand
+                FROM verbrauchsmaterial AS m
+                LEFT JOIN kategorien AS k ON k.id = m.kategorie_id
+                GROUP BY name
+                ORDER BY name
+                """
+            )
+        ]
+        expiring = self.connection.execute(
+            "SELECT COUNT(*) FROM verbrauchsmaterial WHERE verfallsdatum IS NOT NULL"
+        ).fetchone()[0]
+        return {
+            "total_items": int(total_items or 0),
+            "total_bestand": int(total_bestand or 0),
+            "expiring": int(expiring or 0),
+            "categories": categories,
+        }
 
     def list_users(self) -> List[sqlite3.Row]:
         return list(
@@ -2201,6 +2546,54 @@ class DatabaseManager:
             ]
         )
 
+    def export_products_as_pdf(self, filepath: Path) -> None:
+        rows = self.list_products()
+        pdf = canvas.Canvas(str(filepath), pagesize=A4)
+        width, height = A4
+        margin = 40
+        y = height - margin
+
+        pdf.setFont("Helvetica-Bold", 16)
+        pdf.drawString(margin, y, "Produktliste")
+        y -= 24
+        pdf.setFont("Helvetica", 9)
+
+        headers = ["ID", "Name", "Seriennummer", "Status", "Kategorie", "Standort", "Fahrzeug"]
+        col_widths = [40, 140, 110, 80, 100, 120, 100]
+
+        def draw_row(values: List[str], bold: bool = False) -> None:
+            nonlocal y
+            if y < margin + 40:
+                pdf.showPage()
+                y = height - margin
+                pdf.setFont("Helvetica-Bold", 16)
+                pdf.drawString(margin, y, "Produktliste (Fortsetzung)")
+                y -= 24
+                pdf.setFont("Helvetica", 9)
+                draw_row(headers, bold=True)
+            pdf.setFont("Helvetica-Bold" if bold else "Helvetica", 9)
+            x = margin
+            for value, width_part in zip(values, col_widths):
+                pdf.drawString(x, y, value[:60])
+                x += width_part
+            y -= 14
+
+        draw_row(headers, bold=True)
+        for row in rows:
+            draw_row(
+                [
+                    str(row["id"]),
+                    (row["name"] or "")[:60],
+                    row["seriennummer"] or "",
+                    STATUS_LABELS.get(row["status"], row["status"]),
+                    row["kategorie_name"] or "",
+                    self.location_label_from_product(row)[:60],
+                    (row["fahrzeug_name"] or "")[:60],
+                ]
+            )
+
+        pdf.save()
+
     def export_maintenance_ics(self) -> str:
         rows = self.connection.execute(
             """
@@ -2228,8 +2621,76 @@ class DatabaseManager:
                     "END:VEVENT",
                 ]
             )
+
+        due_rows = self.connection.execute(
+            """
+            SELECT id, name, seriennummer, naechste_stk, naechste_mtk
+            FROM produkte
+            WHERE (stk_aktiv = 1 AND naechste_stk IS NOT NULL)
+               OR (mtk_aktiv = 1 AND naechste_mtk IS NOT NULL)
+            """
+        ).fetchall()
+        for row in due_rows:
+            if row["naechste_stk"]:
+                start = datetime.strptime(row["naechste_stk"], "%Y-%m-%d").strftime("%Y%m%d")
+                description = f"Seriennummer: {row['seriennummer']}"
+                lines.extend(
+                    [
+                        "BEGIN:VEVENT",
+                        f"UID:stk-{row['id']}@ployl",
+                        f"DTSTAMP:{now}",
+                        f"DTSTART;VALUE=DATE:{start}",
+                        f"SUMMARY:{row['name']} - STK fällig",
+                        f"DESCRIPTION:{description}",
+                        "END:VEVENT",
+                    ]
+                )
+            if row["naechste_mtk"]:
+                start = datetime.strptime(row["naechste_mtk"], "%Y-%m-%d").strftime("%Y%m%d")
+                description = f"Seriennummer: {row['seriennummer']}"
+                lines.extend(
+                    [
+                        "BEGIN:VEVENT",
+                        f"UID:mtk-{row['id']}@ployl",
+                        f"DTSTAMP:{now}",
+                        f"DTSTART;VALUE=DATE:{start}",
+                        f"SUMMARY:{row['name']} - MTK fällig",
+                        f"DESCRIPTION:{description}",
+                        "END:VEVENT",
+                    ]
+                )
+
+        material_rows = self.connection.execute(
+            """
+            SELECT id, name, verfallsdatum
+            FROM verbrauchsmaterial
+            WHERE verfallsdatum IS NOT NULL
+            """
+        ).fetchall()
+        for row in material_rows:
+            start = datetime.strptime(row["verfallsdatum"], "%Y-%m-%d").strftime("%Y%m%d")
+            lines.extend(
+                [
+                    "BEGIN:VEVENT",
+                    f"UID:verfall-{row['id']}@ployl",
+                    f"DTSTAMP:{now}",
+                    f"DTSTART;VALUE=DATE:{start}",
+                    f"SUMMARY:{row['name']} - Verfallsdatum",
+                    "END:VEVENT",
+                ]
+            )
+
         lines.append("END:VCALENDAR")
         return "\n".join(lines)
+
+    def create_backup(self, backup_dir: Optional[Path] = None) -> Path:
+        self.connection.commit()
+        backup_dir = backup_dir or (self.db_path.parent / "backups")
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        target = backup_dir / f"{self.db_path.stem}-{timestamp}{self.db_path.suffix}"
+        shutil.copy2(self.db_path, target)
+        return target
 
     def close(self) -> None:
         with contextlib.suppress(Exception):
