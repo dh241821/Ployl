@@ -37,6 +37,7 @@ from app.database import (
     PERMISSION_COLUMNS,
     PERMISSION_DEFAULTS,
     PERMISSION_MODULES,
+    ROLE_PERMISSION_PRESETS,
     PRODUKT_VORSCHLAEGE,
     REPARATUR_DATEI_KATEGORIEN,
     TYP_MODELL_VORSCHLAEGE,
@@ -53,6 +54,8 @@ from matplotlib.figure import Figure
 DATE_FORMAT = "%d.%m.%Y"
 REPAIR_STORAGE = Path("storage/reparaturen")
 REPAIR_STORAGE.mkdir(parents=True, exist_ok=True)
+EXPORTS_DIR = Path("exports")
+EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 STATUS_OPTIONS: List[Tuple[str, str]] = [
     ("Im Dienst", "im_dienst"),
@@ -65,6 +68,30 @@ STATUS_VALUE_TO_LABEL = {value: label for label, value in STATUS_OPTIONS}
 BEZIRKSSTELLEN_INFO: Dict[str, Dict[str, str]] = {
     entry["name"]: entry for entry in BEZIRKSSTELLEN_DATEN
 }
+
+
+def slugify_filename(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in value.strip().lower())
+    cleaned = cleaned.strip("_") or "bericht"
+    while "__" in cleaned:
+        cleaned = cleaned.replace("__", "_")
+    return cleaned
+
+
+def build_report_path(prefix: str, extension: str) -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    slug = slugify_filename(prefix or "bericht")
+    if not extension.startswith("."):
+        extension = f".{extension}"
+    return EXPORTS_DIR / f"{slug}_{timestamp}{extension}"
+
+
+def notify_report_saved(path: Path, title: str = "Export") -> None:
+    Messagebox.show_info(f"Bericht gespeichert:\n{path}", title)
+    try:
+        webbrowser.open_new_tab(path.resolve().as_uri())
+    except Exception:
+        pass
 
 
 def parse_date(value: str) -> Optional[date]:
@@ -209,6 +236,8 @@ class NavigationSidebar(ttkb.Frame):
         self.rowconfigure(0, weight=1)
 
         style = ttkb.Style()
+        style.configure("SidebarHeading.TLabel", anchor=tk.W)
+        style.configure("SidebarNav.TButton", anchor=tk.W, justify=tk.LEFT, padding=(14, 8))
         sidebar_bg = style.lookup("Sidebar.TFrame", "background") or "#f1f5f9"
 
         self.canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0, background=sidebar_bg)
@@ -250,6 +279,7 @@ class NavigationSidebar(ttkb.Frame):
             width=22,
             bootstyle="secondary",
         )
+        button.configure(style="SidebarNav.TButton")
         button.grid(sticky=tk.EW, pady=4)
         self._buttons[key] = button
 
@@ -934,27 +964,15 @@ class ProductsView(ttkb.Frame):
         self.refresh()
 
     def export_products(self) -> None:
-        filepath = filedialog.asksaveasfilename(
-            title="CSV exportieren",
-            defaultextension=".csv",
-            filetypes=[("CSV", "*.csv")],
-        )
-        if not filepath:
-            return
         csv_data = self.db.export_products_as_csv()
-        Path(filepath).write_text(csv_data, encoding="utf-8")
-        Messagebox.show_info("Export abgeschlossen", "Export")
+        path = build_report_path("produktliste", ".csv")
+        path.write_text(csv_data, encoding="utf-8")
+        notify_report_saved(path)
 
     def export_pdf(self) -> None:
-        filepath = filedialog.asksaveasfilename(
-            title="PDF exportieren",
-            defaultextension=".pdf",
-            filetypes=[("PDF", "*.pdf")],
-        )
-        if not filepath:
-            return
-        self.db.export_products_as_pdf(Path(filepath))
-        Messagebox.show_info("PDF erstellt", "Export")
+        path = build_report_path("produktliste", ".pdf")
+        self.db.export_products_as_pdf(path)
+        notify_report_saved(path)
 
     def mass_upload(self) -> None:
         if not self._require_write():
@@ -990,45 +1008,27 @@ class ProductsView(ttkb.Frame):
                 parts.append(kennung)
             default_name = "_".join(filter(None, parts)) + ".html"
 
-        filepath = filedialog.asksaveasfilename(
-            title="Produkt-Lebenslauf speichern",
-            defaultextension=".html",
-            filetypes=[("HTML", "*.html")],
-            initialfile=default_name,
-        )
-        if not filepath:
-            return
+        report_prefix = default_name.replace(".html", "") if default_name else f"produkt_{product_id}"
+        path = build_report_path(report_prefix, ".html")
         try:
             html = self.db.product_lifecycle_report(product_id)
         except ValueError as exc:
             Messagebox.show_error(str(exc), "Fehler")
             return
-        Path(filepath).write_text(html, encoding="utf-8")
-        Messagebox.show_info("Bericht erstellt", "Erfolg")
+        path.write_text(html, encoding="utf-8")
+        notify_report_saved(path)
 
     def export_html(self) -> None:
-        filepath = filedialog.asksaveasfilename(
-            title="Produktliste speichern",
-            defaultextension=".html",
-            filetypes=[("HTML", "*.html")],
-        )
-        if not filepath:
-            return
         html = self.db.export_products_as_html()
-        Path(filepath).write_text(html, encoding="utf-8")
-        Messagebox.show_info("Liste erstellt", "Erfolg")
+        path = build_report_path("produktliste", ".html")
+        path.write_text(html, encoding="utf-8")
+        notify_report_saved(path)
 
     def export_ics(self) -> None:
-        filepath = filedialog.asksaveasfilename(
-            title="Wartungen als ICS exportieren",
-            defaultextension=".ics",
-            filetypes=[("ICS", "*.ics")],
-        )
-        if not filepath:
-            return
         ics_data = self.db.export_maintenance_ics()
-        Path(filepath).write_text(ics_data, encoding="utf-8")
-        Messagebox.show_info("ICS Export abgeschlossen", "Erfolg")
+        path = build_report_path("wartungen", ".ics")
+        path.write_text(ics_data, encoding="utf-8")
+        notify_report_saved(path)
 
 
 class VehiclesView(ttkb.Frame):
@@ -1223,20 +1223,17 @@ class VehiclesView(ttkb.Frame):
         vehicle_id = self.selected_vehicle_id()
         if not vehicle_id:
             return
-        filepath = filedialog.asksaveasfilename(
-            title="Fahrzeug-Lebenslauf speichern",
-            defaultextension=".html",
-            filetypes=[("HTML", "*.html")],
-        )
-        if not filepath:
-            return
+        vehicle = self.db.get_vehicle(vehicle_id)
+        vehicle_label = vehicle["name"] if vehicle else f"fahrzeug_{vehicle_id}"
+        prefix = f"fahrzeug_{vehicle_label}_lebenslauf"
+        path = build_report_path(prefix, ".html")
         try:
             html = self.db.vehicle_lifecycle_report(vehicle_id)
         except ValueError as exc:
             Messagebox.show_error(str(exc), "Fehler")
             return
-        Path(filepath).write_text(html, encoding="utf-8")
-        Messagebox.show_info("Bericht erstellt", "Erfolg")
+        path.write_text(html, encoding="utf-8")
+        notify_report_saved(path)
 
     def transfer_products(self) -> None:
         if not self._require_write():
@@ -1605,19 +1602,14 @@ class AnalyticsView(ttkb.Frame):
             Messagebox.show_info("Bitte ein Fahrzeug auswählen", "Hinweis")
             return
         fahrzeug_id = self.vehicle_options[label]
-        filepath = filedialog.asksaveasfilename(
-            title="Produkte nach Fahrzeug drucken",
-            defaultextension=".html",
-            filetypes=[("HTML", "*.html")],
-        )
-        if not filepath:
-            return
         html = self.db.export_products_filtered_html(
             fahrzeug_id=fahrzeug_id,
             title=f"Produkte für {label}",
         )
-        Path(filepath).write_text(html, encoding="utf-8")
-        Messagebox.show_info("Export abgeschlossen", "Erfolg")
+        prefix = f"fahrzeug_{label}_produkte"
+        path = build_report_path(prefix, ".html")
+        path.write_text(html, encoding="utf-8")
+        notify_report_saved(path, title="Fahrzeugliste")
 
     def export_location_products(self) -> None:
         land = self.land_var.get().strip() or None
@@ -1630,14 +1622,6 @@ class AnalyticsView(ttkb.Frame):
             Messagebox.show_info("Bitte mindestens eine Ebene auswählen", "Hinweis")
             return
 
-        filepath = filedialog.asksaveasfilename(
-            title="Produkte nach Standort drucken",
-            defaultextension=".html",
-            filetypes=[("HTML", "*.html")],
-        )
-        if not filepath:
-            return
-
         html = self.db.export_products_filtered_html(
             land=land,
             bereich=bereich,
@@ -1646,8 +1630,11 @@ class AnalyticsView(ttkb.Frame):
             ortsstelle=ortsstelle,
             title="Produkte nach Standort",
         )
-        Path(filepath).write_text(html, encoding="utf-8")
-        Messagebox.show_info("Export abgeschlossen", "Erfolg")
+        label_parts = [part for part in (land, bereich, bezirk, bezirksstelle, ortsstelle) if part]
+        prefix = "standort_" + "_".join(label_parts or ["auswahl"])
+        path = build_report_path(prefix, ".html")
+        path.write_text(html, encoding="utf-8")
+        notify_report_saved(path, title="Standortliste")
 
 class MasterDataView(ttkb.Frame):
     def __init__(
@@ -1669,6 +1656,7 @@ class MasterDataView(ttkb.Frame):
         nav_container.rowconfigure(0, weight=1)
 
         self.nav = ttkb.Treeview(nav_container, show="tree", selectmode="browse", height=18)
+        self.nav.column("#0", width=240, minwidth=220, stretch=False)
         self.nav.grid(row=0, column=0, sticky=tk.NS)
         nav_scroll = ttkb.Scrollbar(nav_container, orient=tk.VERTICAL, command=self.nav.yview)
         nav_scroll.grid(row=0, column=1, sticky=tk.NS, padx=(4, 0))
@@ -2588,6 +2576,9 @@ class VehicleModelsFrame(ttkb.Frame):
         return int(rows[0].values[0])
 
     def add_model(self) -> None:
+        if not self.brands:
+            Messagebox.show_info("Bitte zuerst eine Fahrzeugmarke anlegen.", "Hinweis")
+            return
         dialog = VehicleModelDialog(self, self.brands)
         self.wait_window(dialog)
         if not dialog.result:
@@ -2611,6 +2602,9 @@ class VehicleModelsFrame(ttkb.Frame):
     def edit_model(self) -> None:
         model_id = self.selected_id()
         if not model_id:
+            return
+        if not self.brands:
+            Messagebox.show_info("Bitte zuerst eine Fahrzeugmarke anlegen.", "Hinweis")
             return
         model = next((row for row in self.db.list_vehicle_models() if row["id"] == model_id), None)
         if not model:
@@ -3159,7 +3153,11 @@ class VehicleModelDialog(ttkb.Toplevel):
         ttkb.Label(container, text="Marke").grid(row=0, column=0, sticky=W, pady=5)
         self.brand_var = ttkb.StringVar()
         self.brands = brands
-        values = ["Keine"] + [row["name"] for row in brands]
+        values = [row["name"] for row in brands]
+        if not values:
+            Messagebox.show_error("Bitte zuerst eine Fahrzeugmarke anlegen.", "Hinweis")
+            self.destroy()
+            return
         brand_box = ttkb.Combobox(
             container,
             textvariable=self.brand_var,
@@ -3183,6 +3181,8 @@ class VehicleModelDialog(ttkb.Toplevel):
                 brand_name = existing["marke"] or ""
             if brand_name and brand_name in values:
                 self.brand_var.set(brand_name)
+            else:
+                self.brand_var.set(values[0])
             if "name" in keys:
                 self.name_var.set(existing["name"] or "")
 
@@ -3200,11 +3200,13 @@ class VehicleModelDialog(ttkb.Toplevel):
             return
         brand_value = self.brand_var.get()
         brand_id: Optional[int] = None
-        if brand_value != "Keine":
-            for row in self.brands:
-                if row["name"] == brand_value:
-                    brand_id = row["id"]
-                    break
+        for row in self.brands:
+            if row["name"] == brand_value:
+                brand_id = row["id"]
+                break
+        if brand_id is None:
+            Messagebox.show_warning("Bitte eine Fahrzeugmarke auswählen", "Hinweis")
+            return
         self.result = (brand_id, name)
         self.destroy()
 
@@ -3265,6 +3267,8 @@ class UserDialog(ttkb.Toplevel):
 
         ttkb.Label(container, text="Rolle").grid(row=4, column=0, sticky=W, pady=5)
         self.rolle_var = ttkb.StringVar(value=rolle)
+        self._allow_role_preset = permissions is None
+        self._applying_preset = False
         ttkb.Combobox(
             container,
             textvariable=self.rolle_var,
@@ -3272,12 +3276,15 @@ class UserDialog(ttkb.Toplevel):
             state="readonly",
             width=28,
         ).grid(row=4, column=1, sticky=W)
+        self.rolle_var.trace_add("write", self._on_role_change)
 
-        permission_values = PERMISSION_DEFAULTS.copy()
+        base_preset = ROLE_PERMISSION_PRESETS.get(rolle, PERMISSION_DEFAULTS)
+        permission_values = base_preset.copy()
         if permissions:
             for key, value in permissions.items():
                 if key in permission_values:
                     permission_values[key] = bool(value)
+            self._allow_role_preset = False
 
         self.permission_vars: Dict[str, Tuple[ttkb.BooleanVar, ttkb.BooleanVar]] = {}
         permissions_frame = ttkb.Labelframe(container, text="Modul-Berechtigungen")
@@ -3299,9 +3306,10 @@ class UserDialog(ttkb.Toplevel):
                 variable=write_var,
                 bootstyle="round-toggle",
             ).grid(row=index, column=1, sticky=W, padx=5, pady=3)
+            read_var.trace_add("write", self._mark_permissions_dirty)
             write_var.trace_add(
                 "write",
-                lambda *_args, r_var=read_var, w_var=write_var: self._on_write_toggle(r_var, w_var),
+                lambda *_args, r_var=read_var, w_var=write_var: self._handle_write_toggle(r_var, w_var),
             )
 
         location_frame = ttkb.Labelframe(container, text="Standort-Berechtigungen")
@@ -3455,6 +3463,36 @@ class UserDialog(ttkb.Toplevel):
     def _on_write_toggle(read_var: ttkb.BooleanVar, write_var: ttkb.BooleanVar) -> None:
         if write_var.get() and not read_var.get():
             read_var.set(True)
+
+    def _handle_write_toggle(self, read_var: ttkb.BooleanVar, write_var: ttkb.BooleanVar) -> None:
+        self._on_write_toggle(read_var, write_var)
+        self._mark_permissions_dirty()
+
+    def _mark_permissions_dirty(self, *_: object) -> None:
+        if self._applying_preset:
+            return
+        self._allow_role_preset = False
+
+    def _on_role_change(self, *_: object) -> None:
+        if not self._allow_role_preset:
+            return
+        self._apply_role_preset(self.rolle_var.get())
+
+    def _apply_role_preset(self, role: str) -> None:
+        preset = ROLE_PERMISSION_PRESETS.get(role)
+        if not preset:
+            return
+        self._applying_preset = True
+        try:
+            for module, (read_var, write_var) in self.permission_vars.items():
+                read_key = f"{module}_lesen"
+                write_key = f"{module}_schreiben"
+                read_default = PERMISSION_DEFAULTS.get(read_key, False)
+                write_default = PERMISSION_DEFAULTS.get(write_key, False)
+                read_var.set(bool(preset.get(read_key, read_default)))
+                write_var.set(bool(preset.get(write_key, write_default)))
+        finally:
+            self._applying_preset = False
 
 
 class LocationPermissionDialog(ttkb.Toplevel):

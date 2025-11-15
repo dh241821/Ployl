@@ -645,7 +645,25 @@ PERMISSION_COLUMNS: List[str] = [
     for suffix in ("lesen", "schreiben")
 ]
 
-PERMISSION_DEFAULTS: Dict[str, bool] = {column: True for column in PERMISSION_COLUMNS}
+
+def _permission_map(default: bool) -> Dict[str, bool]:
+    return {column: default for column in PERMISSION_COLUMNS}
+
+
+PERMISSION_DEFAULTS: Dict[str, bool] = _permission_map(True)
+
+ROLE_PERMISSION_PRESETS: Dict[str, Dict[str, bool]] = {
+    "admin": _permission_map(True),
+    "benutzer": {
+        **_permission_map(False),
+        "standorte_lesen": True,
+        "produkte_lesen": True,
+        "produkte_schreiben": True,
+        "material_lesen": True,
+        "material_schreiben": True,
+        "fahrzeuge_lesen": True,
+    },
+}
 
 
 @dataclass
@@ -1536,7 +1554,8 @@ class DatabaseManager:
             password_hash = self.hash_password("admin")
             columns_sql = ", ".join(PERMISSION_COLUMNS)
             placeholders = ", ".join(["?"] * len(PERMISSION_COLUMNS))
-            permission_values = [1 if PERMISSION_DEFAULTS[column] else 0 for column in PERMISSION_COLUMNS]
+            admin_preset = ROLE_PERMISSION_PRESETS.get("admin", PERMISSION_DEFAULTS)
+            permission_values = [1 if admin_preset[column] else 0 for column in PERMISSION_COLUMNS]
             self.connection.execute(
                 f"""
                 INSERT INTO benutzer (username, password_hash, full_name, role, vorname, nachname, dienstnummer, email, {columns_sql})
@@ -3371,7 +3390,8 @@ class DatabaseManager:
         if not username:
             raise ValueError("Dienstnummer darf nicht leer sein")
         full_name = f"{vorname.strip()} {nachname.strip()}".strip()
-        merged_permissions = PERMISSION_DEFAULTS.copy()
+        role_preset = ROLE_PERMISSION_PRESETS.get(rolle, PERMISSION_DEFAULTS)
+        merged_permissions = role_preset.copy()
         if permissions:
             for key, value in permissions.items():
                 if key in merged_permissions:
