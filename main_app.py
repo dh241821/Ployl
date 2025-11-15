@@ -159,6 +159,21 @@ def bind_date_entry(widget: DateEntry, variable: ttkb.StringVar) -> None:
         widget.entry.insert(0, current)
 
 
+def safe_row_get(row: Any, key: str, default: Any = "") -> Any:
+    """Return a value from sqlite rows or dictionaries without using Row.get."""
+
+    try:
+        if hasattr(row, "keys") and key in row.keys():  # sqlite3.Row provides keys()
+            value = row[key]
+        elif isinstance(row, dict):
+            value = row.get(key)
+        else:
+            value = getattr(row, key, default)
+    except Exception:
+        return default
+    return default if value is None else value
+
+
 class IdentifierCombobox(ttkb.Combobox):
     """Lightweight autocomplete combobox for service number selection."""
 
@@ -794,7 +809,7 @@ class ProductsView(ttkb.Frame):
                         row["name"],
                         row["seriennummer"],
                         row["hersteller"],
-                        row.get("produkt_hersteller_name", ""),
+                        safe_row_get(row, "produkt_hersteller_name", ""),
                         row["standort_name"],
                         row["fahrzeug_name"],
                         row["status"],
@@ -2014,7 +2029,7 @@ class LocationsFrame(ttkb.Frame):
             else:
                 matches = True
                 for key, needle in active_filters.items():
-                    haystack = (row.get(key) or "").lower()
+                    haystack = (safe_row_get(row, key, "") or "").lower()
                     if needle not in haystack:
                         matches = False
                         break
@@ -2028,7 +2043,7 @@ class LocationsFrame(ttkb.Frame):
                     row["bezirk"] or "",
                     row["bezirksstelle"] or "",
                     row["ortsstelle"] or "",
-                    row.get("funkkennung") or "",
+                    safe_row_get(row, "funkkennung", ""),
                 )
             )
 
@@ -3876,7 +3891,9 @@ class GlobalSearchDialog(LargeDialog):
                 self.table.insert_row(
                     values=(
                         section.capitalize(),
-                        row.get("name") or row.get("full_name") or row.get("kennzeichen") or "",
+                        safe_row_get(row, "name", "")
+                        or safe_row_get(row, "full_name", "")
+                        or safe_row_get(row, "kennzeichen", ""),
                         ", ".join(details),
                     )
                 )
@@ -7422,10 +7439,11 @@ class ApprovalCenterDialog(ttkb.Toplevel):
             )
 
     def _update_status(self, status: str) -> None:
-        selected = self.table.get_selected_row()
-        if not selected:
+        rows = self.table.get_rows("selected")
+        if not rows:
             Messagebox.show_warning("Bitte Eintrag auswählen", "Hinweis")
             return
+        selected = rows[0]
         dialog = SimpleEntryDialog(self, "Kommentar", ["Kommentar"])
         self.wait_window(dialog)
         kommentar = dialog.result[0] if dialog and dialog.result else ""
