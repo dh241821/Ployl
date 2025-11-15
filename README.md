@@ -2,6 +2,10 @@
 
 Medizinprodukte-Management System mit Desktop-GUI **und** Netzwerk-Backend. Die ausführliche Dokumentation findest du unter [`docs/medizinprodukte_management_system.md`](docs/medizinprodukte_management_system.md) oder komfortabel gerendert als [HTML-Version](docs/medizinprodukte_management_system.html).
 
+- **Windows-Anleitung:** [docs/windows_installation.md](docs/windows_installation.md)
+- **Benutzerhandbuch:** [docs/benutzerhandbuch.md](docs/benutzerhandbuch.md)
+- **Technische Dokumentation:** [docs/system_architecture.md](docs/system_architecture.md)
+
 ## Desktop Schnellstart
 
 ```bash
