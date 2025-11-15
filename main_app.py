@@ -5,7 +5,7 @@ from __future__ import annotations
 import calendar
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import shutil
 import sqlite3
@@ -1363,6 +1363,9 @@ class MasterDataView(ttkb.Frame):
         self.component_types_frame = ComponentTypesFrame(notebook, db)
         notebook.add(self.component_types_frame, text="Komponententypen")
 
+        self.maintenance_types_frame = MaintenanceTypesFrame(notebook, db)
+        notebook.add(self.maintenance_types_frame, text="Wartungstypen")
+
         self.repair_types_frame = RepairTypesFrame(notebook, db)
         notebook.add(self.repair_types_frame, text="Reparaturarten")
 
@@ -1393,6 +1396,7 @@ class MasterDataView(ttkb.Frame):
         self.product_models_frame.refresh()
         self.product_manufacturers_frame.refresh()
         self.component_types_frame.refresh()
+        self.maintenance_types_frame.refresh()
         self.repair_types_frame.refresh()
         self.upload_categories_frame.refresh()
         self.material_names_frame.refresh()
@@ -1819,6 +1823,20 @@ class ComponentTypesFrame(SimpleLookupFrame):
             title="Komponententypen",
             column_key="name",
             label="Komponententyp",
+        )
+
+
+class MaintenanceTypesFrame(SimpleLookupFrame):
+    def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
+        super().__init__(
+            master,
+            db,
+            fetch_fn=db.list_maintenance_types,
+            add_fn=db.add_maintenance_type,
+            delete_fn=db.delete_maintenance_type,
+            title="Wartungstypen",
+            column_key="name",
+            label="Wartungstyp",
         )
 
 
@@ -2839,6 +2857,7 @@ class ProductEditor(ttkb.Toplevel):
             return
         self.vehicles = db.list_vehicles()
         self.component_types = db.list_component_types()
+        self.maintenance_types = db.list_maintenance_types()
         self.repair_types = db.list_repair_types()
         self.upload_categories = db.list_upload_categories()
 
@@ -2866,7 +2885,9 @@ class ProductEditor(ttkb.Toplevel):
         )
         self.notebook.add(self.components_tab, text="Komponenten")
 
-        self.maintenance_tab = MaintenanceTab(self.notebook, self.db, self.produkt_id)
+        self.maintenance_tab = MaintenanceTab(
+            self.notebook, self.db, self.produkt_id, maintenance_types=self.maintenance_types
+        )
         self.notebook.add(self.maintenance_tab, text="Wartungen")
 
         self.repairs_tab = RepairsTab(
@@ -2933,7 +2954,7 @@ class ProductEditor(ttkb.Toplevel):
         info_frame = ttkb.Labelframe(parent, text="Produktspezifisch")
         info_frame.pack(fill=BOTH, expand=True, padx=5, pady=5)
 
-        ttkb.Label(info_frame, text="Bezeichnung*").grid(row=0, column=0, sticky=W, pady=4)
+        ttkb.Label(info_frame, text="Bezeichnung").grid(row=0, column=0, sticky=W, pady=4)
         self.name_entry = ttkb.Entry(info_frame, textvariable=self.name_var, width=40, state="readonly")
         self.name_entry.grid(row=0, column=1, sticky=W)
 
@@ -2953,25 +2974,28 @@ class ProductEditor(ttkb.Toplevel):
         self.modell_box.grid(row=2, column=1, sticky=W)
         self.modell_box.bind("<<ComboboxSelected>>", lambda _event: self._update_name_from_type_model())
 
-        ttkb.Label(info_frame, text="Hersteller").grid(row=3, column=0, sticky=W, pady=4)
+        ttkb.Label(info_frame, text="Seriennummer*").grid(row=3, column=0, sticky=W, pady=4)
+        ttkb.Entry(info_frame, textvariable=self.seriennummer_var, width=40).grid(row=3, column=1, sticky=W)
+
+        ttkb.Label(info_frame, text="Hersteller").grid(row=4, column=0, sticky=W, pady=4)
         self.hersteller_box = ttkb.Combobox(
             info_frame,
             textvariable=self.hersteller_var,
             width=37,
         )
-        self.hersteller_box.grid(row=3, column=1, sticky=W)
+        self.hersteller_box.grid(row=4, column=1, sticky=W)
         self._refresh_manufacturer_choices()
 
-        ttkb.Label(info_frame, text="Anschaffungsdatum (TT.MM.JJJJ)").grid(row=4, column=0, sticky=W, pady=4)
+        ttkb.Label(info_frame, text="Anschaffungsdatum (TT.MM.JJJJ)").grid(row=5, column=0, sticky=W, pady=4)
         self.anschaffungsdatum_entry = DateEntry(
             info_frame,
             dateformat=DATE_FORMAT,
             width=18,
         )
-        self.anschaffungsdatum_entry.grid(row=4, column=1, sticky=W)
+        self.anschaffungsdatum_entry.grid(row=5, column=1, sticky=W)
         bind_date_entry(self.anschaffungsdatum_entry, self.anschaffungsdatum_var)
 
-        ttkb.Label(info_frame, text="Kategorie").grid(row=5, column=0, sticky=W, pady=4)
+        ttkb.Label(info_frame, text="Kategorie").grid(row=6, column=0, sticky=W, pady=4)
         self.kategorie_box = ttkb.Combobox(
             info_frame,
             textvariable=self.kategorie_var,
@@ -2979,7 +3003,7 @@ class ProductEditor(ttkb.Toplevel):
             width=37,
             state="readonly",
         )
-        self.kategorie_box.grid(row=5, column=1, sticky=W)
+        self.kategorie_box.grid(row=6, column=1, sticky=W)
 
         compliance_frame = ttkb.Labelframe(parent, text="Kontrollen")
         compliance_frame.pack(fill=BOTH, expand=True, padx=5, pady=5)
@@ -3279,9 +3303,6 @@ class ProductEditor(ttkb.Toplevel):
         self.repairs_tab.set_product_id(self.produkt_id)
 
     def save(self) -> None:
-        if not self.name_var.get().strip():
-            Messagebox.show_error("Bezeichnung ist erforderlich", "Fehler")
-            return
         if not self.seriennummer_var.get().strip():
             Messagebox.show_error("Seriennummer ist erforderlich", "Fehler")
             return
@@ -3772,13 +3793,21 @@ class ComponentFormDialog(ttkb.Toplevel):
 
 
 class MaintenanceTab(ttkb.Frame):
-    def __init__(self, master: tk.Misc, db: DatabaseManager, produkt_id: Optional[int]) -> None:
+    def __init__(
+        self,
+        master: tk.Misc,
+        db: DatabaseManager,
+        produkt_id: Optional[int],
+        *,
+        maintenance_types: Optional[Sequence[Any]] = None,
+    ) -> None:
         super().__init__(master)
         self.db = db
         self.produkt_id = produkt_id
         self.maintenance_cache: Dict[int, sqlite3.Row] = {}
         self.pending_maintenances: List[Dict[str, Any]] = []
         self.pending_cache: Dict[str, Dict[str, Any]] = {}
+        self.maintenance_types: List[str] = self._normalize_types(maintenance_types)
 
         self.toolbar = ttkb.Frame(self)
         self.toolbar.pack(fill=tk.X, padx=10, pady=10)
@@ -3834,6 +3863,7 @@ class MaintenanceTab(ttkb.Frame):
         self.table.delete_rows()
         self.maintenance_cache = {}
         for row in self.db.list_maintenance(self.produkt_id):
+            self._register_type(row["wartungstyp"])
             self.maintenance_cache[int(row["id"])] = row
             self.table.insert_row(
                 values=(
@@ -3851,6 +3881,7 @@ class MaintenanceTab(ttkb.Frame):
         for index, record in enumerate(self.pending_maintenances, start=1):
             key = f"neu-{index}"
             self.pending_cache[key] = {"index": index - 1, "data": record}
+            self._register_type(record.get("wartungstyp", ""))
             self.table.insert_row(
                 values=(
                     key,
@@ -3878,11 +3909,16 @@ class MaintenanceTab(ttkb.Frame):
         return str(rows[0].values[0])
 
     def add_maintenance(self) -> None:
-        dialog = MaintenanceFormDialog(self, "Wartung planen")
+        dialog = MaintenanceFormDialog(
+            self,
+            "Wartung planen",
+            maintenance_types=self.maintenance_types,
+        )
         self.wait_window(dialog)
         if not dialog.result:
             return
         data = dialog.result
+        self._register_type(data["wartungstyp"])
         if self.produkt_id:
             self.db.add_or_update_maintenance(
                 wartung_id=None,
@@ -3918,11 +3954,17 @@ class MaintenanceTab(ttkb.Frame):
             if not pending:
                 return
             record = dict(pending["data"])
-            dialog = MaintenanceFormDialog(self, "Wartung bearbeiten", record)
+            dialog = MaintenanceFormDialog(
+                self,
+                "Wartung bearbeiten",
+                data=record,
+                maintenance_types=self.maintenance_types,
+            )
             self.wait_window(dialog)
             if not dialog.result:
                 return
             data = dialog.result
+            self._register_type(data["wartungstyp"])
             updated = {
                 "geplanter_termin": data["geplanter_termin"].isoformat(),
                 "wartungstyp": data["wartungstyp"],
@@ -3941,11 +3983,17 @@ class MaintenanceTab(ttkb.Frame):
         row = self.maintenance_cache.get(wartung_id)
         if not row:
             return
-        dialog = MaintenanceFormDialog(self, "Wartung bearbeiten", row)
+        dialog = MaintenanceFormDialog(
+            self,
+            "Wartung bearbeiten",
+            data=row,
+            maintenance_types=self.maintenance_types,
+        )
         self.wait_window(dialog)
         if not dialog.result:
             return
         data = dialog.result
+        self._register_type(data["wartungstyp"])
         self.db.add_or_update_maintenance(
             wartung_id=wartung_id,
             produkt_id=self.produkt_id,
@@ -3988,6 +4036,7 @@ class MaintenanceTab(ttkb.Frame):
                 if record.get("durchgefuehrt_am")
                 else None
             )
+            self._register_type(record.get("wartungstyp", ""))
             self.db.add_or_update_maintenance(
                 wartung_id=None,
                 produkt_id=produkt_id,
@@ -4000,9 +4049,38 @@ class MaintenanceTab(ttkb.Frame):
             )
         self.pending_maintenances.clear()
         self.pending_cache = {}
+
+    def set_maintenance_types(self, maintenance_types: Sequence[Any]) -> None:
+        self.maintenance_types = self._normalize_types(maintenance_types)
+
+    @staticmethod
+    def _normalize_types(values: Optional[Sequence[Any]]) -> List[str]:
+        names: List[str] = []
+        if not values:
+            return names
+        for value in values:
+            if isinstance(value, sqlite3.Row):
+                name = value["name"] if "name" in value.keys() else str(value)
+            else:
+                name = str(value)
+            name = name.strip()
+            if name:
+                names.append(name)
+        return sorted(set(names))
+
+    def _register_type(self, name: str) -> None:
+        cleaned = name.strip()
+        if cleaned and cleaned not in self.maintenance_types:
+            self.maintenance_types.append(cleaned)
+            self.maintenance_types.sort()
 class MaintenanceFormDialog(ttkb.Toplevel):
     def __init__(
-        self, master: tk.Misc, title: str, data: Optional[sqlite3.Row] = None
+        self,
+        master: tk.Misc,
+        title: str,
+        *,
+        data: Optional[sqlite3.Row] = None,
+        maintenance_types: Optional[Sequence[str]] = None,
     ) -> None:
         super().__init__(master)
         self.title(title)
@@ -4013,7 +4091,11 @@ class MaintenanceFormDialog(ttkb.Toplevel):
         container.pack(fill=BOTH, expand=True)
 
         self.geplant_var = ttkb.StringVar(value=format_date(data["geplanter_termin"]) if data else "")
-        self.typ_var = ttkb.StringVar(value=(data["wartungstyp"] if data else ""))
+        initial_type = ""
+        if data:
+            initial_type = data["wartungstyp"] or ""
+        initial_type = str(initial_type).strip()
+        self.typ_var = ttkb.StringVar(value=initial_type)
         self.beschreibung_var = ttkb.StringVar(value=(data["beschreibung"] if data else ""))
         self.durchgefuehrt_var = ttkb.StringVar(value=format_date(data["durchgefuehrt_am"]) if data else "")
         self.von_var = ttkb.StringVar(value=(data["durchgefuehrt_von"] if data else ""))
@@ -4029,7 +4111,18 @@ class MaintenanceFormDialog(ttkb.Toplevel):
         bind_date_entry(self.geplant_entry, self.geplant_var)
 
         ttkb.Label(container, text="Typ*").grid(row=1, column=0, sticky=W, pady=5)
-        ttkb.Entry(container, textvariable=self.typ_var, width=35).grid(row=1, column=1, sticky=W)
+        type_values = sorted({str(value).strip() for value in (maintenance_types or []) if str(value).strip()})
+        existing_type = initial_type
+        if existing_type and existing_type not in type_values:
+            type_values.append(existing_type)
+            type_values.sort()
+        self.type_box = ttkb.Combobox(
+            container,
+            textvariable=self.typ_var,
+            values=type_values,
+            width=35,
+        )
+        self.type_box.grid(row=1, column=1, sticky=W)
 
         ttkb.Label(container, text="Beschreibung").grid(row=2, column=0, sticky=W, pady=5)
         ttkb.Entry(container, textvariable=self.beschreibung_var, width=35).grid(row=2, column=1, sticky=W)

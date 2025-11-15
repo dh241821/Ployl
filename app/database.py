@@ -329,6 +329,11 @@ class DatabaseManager:
                     FOREIGN KEY(upload_kategorie_id) REFERENCES upload_kategorien(id) ON DELETE SET NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS wartungstypen (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE
+                );
+
                 CREATE TABLE IF NOT EXISTS ausscheidungen (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     produkt_id INTEGER NOT NULL,
@@ -479,6 +484,13 @@ class DatabaseManager:
                 for name in ["Elektronik", "Mechanik", "Software", "Kalibrierung"]:
                     self.connection.execute(
                         "INSERT INTO reparatur_arten (name) VALUES (?)",
+                        (name,),
+                    )
+
+            if not list(self.connection.execute("SELECT id FROM wartungstypen")):
+                for name in ["STK", "MTK", "Inspektion", "Kalibrierung"]:
+                    self.connection.execute(
+                        "INSERT INTO wartungstypen (name) VALUES (?)",
                         (name,),
                     )
 
@@ -775,6 +787,26 @@ class DatabaseManager:
         with self.connection:
             self.connection.execute(
                 "DELETE FROM komponententypen WHERE id = ?",
+                (typ_id,),
+            )
+
+    def list_maintenance_types(self) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute("SELECT * FROM wartungstypen ORDER BY name")
+        )
+
+    def add_maintenance_type(self, name: str) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                "INSERT INTO wartungstypen (name) VALUES (?)",
+                (name,),
+            )
+            return int(cur.lastrowid)
+
+    def delete_maintenance_type(self, typ_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM wartungstypen WHERE id = ?",
                 (typ_id,),
             )
 
