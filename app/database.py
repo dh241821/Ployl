@@ -1671,6 +1671,20 @@ class DatabaseManager:
             )
             return int(cur.lastrowid)
 
+    def update_category(self, category_id: int, name: str, typ: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE kategorien SET name = ?, typ = ? WHERE id = ?",
+                (name, typ, category_id),
+            )
+
+    def delete_category(self, category_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM kategorien WHERE id = ?",
+                (category_id,),
+            )
+
     def list_product_types(self) -> List[sqlite3.Row]:
         return list(
             self.connection.execute("SELECT * FROM produkt_typen ORDER BY name")
@@ -1683,6 +1697,13 @@ class DatabaseManager:
                 (name,),
             )
             return int(cur.lastrowid)
+
+    def update_product_type(self, typ_id: int, name: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE produkt_typen SET name = ? WHERE id = ?",
+                (name, typ_id),
+            )
 
     def delete_product_type(self, typ_id: int) -> None:
         with self.connection:
@@ -1711,6 +1732,13 @@ class DatabaseManager:
             )
             return int(cur.lastrowid)
 
+    def update_product_model(self, modell_id: int, typ_id: int, name: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE produkt_modelle SET typ_id = ?, name = ? WHERE id = ?",
+                (typ_id, name, modell_id),
+            )
+
     def delete_product_model(self, modell_id: int) -> None:
         with self.connection:
             self.connection.execute(
@@ -1731,6 +1759,13 @@ class DatabaseManager:
             )
             return int(cur.lastrowid)
 
+    def update_product_manufacturer(self, hersteller_id: int, name: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE produkt_hersteller SET name = ? WHERE id = ?",
+                (name, hersteller_id),
+            )
+
     def delete_product_manufacturer(self, hersteller_id: int) -> None:
         with self.connection:
             self.connection.execute(
@@ -1750,6 +1785,13 @@ class DatabaseManager:
                 (name,),
             )
             return int(cur.lastrowid)
+
+    def update_component_type(self, typ_id: int, name: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE komponententypen SET name = ? WHERE id = ?",
+                (name, typ_id),
+            )
 
     def delete_component_type(self, typ_id: int) -> None:
         with self.connection:
@@ -1774,6 +1816,13 @@ class DatabaseManager:
             )
             return int(cur.lastrowid)
 
+    def update_retirement_reason(self, reason_id: int, name: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE ausscheidungsgruende SET name = ? WHERE id = ? AND mandant_id = ?",
+                (name, reason_id, self._active_mandant_id),
+            )
+
     def delete_retirement_reason(self, reason_id: int) -> None:
         with self.connection:
             self.connection.execute(
@@ -1794,6 +1843,13 @@ class DatabaseManager:
             )
             return int(cur.lastrowid)
 
+    def update_maintenance_type(self, typ_id: int, name: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE wartungstypen SET name = ? WHERE id = ?",
+                (name, typ_id),
+            )
+
     def delete_maintenance_type(self, typ_id: int) -> None:
         with self.connection:
             self.connection.execute(
@@ -1811,6 +1867,13 @@ class DatabaseManager:
                 (name,),
             )
             return int(cur.lastrowid)
+
+    def update_repair_type(self, typ_id: int, name: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE reparatur_arten SET name = ? WHERE id = ?",
+                (name, typ_id),
+            )
 
     def delete_repair_type(self, typ_id: int) -> None:
         with self.connection:
@@ -1832,6 +1895,13 @@ class DatabaseManager:
             )
             return int(cur.lastrowid)
 
+    def update_upload_category(self, category_id: int, name: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE upload_kategorien SET name = ? WHERE id = ?",
+                (name, category_id),
+            )
+
     def delete_upload_category(self, category_id: int) -> None:
         with self.connection:
             self.connection.execute(
@@ -1851,6 +1921,13 @@ class DatabaseManager:
                 (name,),
             )
             return int(cur.lastrowid)
+
+    def update_material_name(self, name_id: int, name: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE material_bezeichnungen SET name = ? WHERE id = ?",
+                (name, name_id),
+            )
 
     def delete_material_name(self, name_id: int) -> None:
         with self.connection:
@@ -1883,6 +1960,13 @@ class DatabaseManager:
             )
             return int(cur.lastrowid)
 
+    def update_vehicle_brand(self, brand_id: int, name: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE fahrzeug_marken SET name = ? WHERE id = ?",
+                (name, brand_id),
+            )
+
     def delete_vehicle_brand(self, brand_id: int) -> None:
         with self.connection:
             self.connection.execute(
@@ -1910,6 +1994,13 @@ class DatabaseManager:
             )
             return int(cur.lastrowid)
 
+    def update_vehicle_model(self, model_id: int, marke_id: Optional[int], name: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE fahrzeug_modelle SET marke_id = ?, name = ? WHERE id = ?",
+                (marke_id, name, model_id),
+            )
+
     def delete_vehicle_model(self, model_id: int) -> None:
         with self.connection:
             self.connection.execute(
@@ -1929,6 +2020,13 @@ class DatabaseManager:
                 (name,),
             )
             return int(cur.lastrowid)
+
+    def update_vehicle_category(self, category_id: int, name: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE fahrzeug_kategorien SET name = ? WHERE id = ?",
+                (name, category_id),
+            )
 
     def delete_vehicle_category(self, category_id: int) -> None:
         with self.connection:
