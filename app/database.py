@@ -16,6 +16,12 @@ import qrcode
 
 DATABASE_FILE = Path("medizinprodukte.db")
 
+STATUS_LABELS: Dict[str, str] = {
+    "im_dienst": "Im Dienst",
+    "in_reparatur": "In Reparatur",
+    "ausgeschieden": "Ausgeschieden",
+}
+
 
 @dataclass
 class User:
@@ -34,6 +40,7 @@ class DatabaseManager:
         self.db_path = db_path
         self.connection = sqlite3.connect(self.db_path)
         self.connection.row_factory = sqlite3.Row
+        self._location_cache: Dict[int, sqlite3.Row] = {}
         self.initialize_schema()
         self.ensure_default_admin()
 
@@ -108,7 +115,10 @@ class DatabaseManager:
                     adresse TEXT,
                     telefon TEXT,
                     email TEXT,
-                    kontaktperson TEXT
+                    kontaktperson TEXT,
+                    unternehmen TEXT,
+                    website TEXT,
+                    info TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS fahrzeuge (
@@ -304,6 +314,10 @@ class DatabaseManager:
         self._ensure_column("benutzer", "nachname", "TEXT")
         self._ensure_column("benutzer", "dienstnummer", "TEXT")
 
+        self._ensure_column("kontakte", "unternehmen", "TEXT")
+        self._ensure_column("kontakte", "website", "TEXT")
+        self._ensure_column("kontakte", "info", "TEXT")
+
     def _seed_defaults(self) -> None:
         with self.connection:
             existing = {
@@ -331,11 +345,97 @@ class DatabaseManager:
                         (name,),
                     )
 
+            if not list(self.connection.execute("SELECT id FROM standorte")):
+                bereichs_map = {
+                    "Waldviertel": [
+                        "Gmünd",
+                        "Horn",
+                        "Krems (Land)",
+                        "Krems (Stadt)",
+                        "Waidhofen an der Thaya",
+                        "Zwettl",
+                    ],
+                    "Weinviertel": [
+                        "Gänserndorf",
+                        "Hollabrunn",
+                        "Korneuburg",
+                        "Mistelbach",
+                    ],
+                    "Mostviertel": [
+                        "Amstetten",
+                        "Lilienfeld",
+                        "Melk",
+                        "Scheibbs",
+                        "St. Pölten (Land)",
+                        "St. Pölten (Stadt)",
+                        "Waidhofen an der Ybbs",
+                    ],
+                    "Industrieviertel": [
+                        "Baden",
+                        "Bruck an der Leitha",
+                        "Mödling",
+                        "Neunkirchen",
+                        "Tulln",
+                        "Wiener Neustadt (Land)",
+                        "Wiener Neustadt (Stadt)",
+                    ],
+                    "Katastrophenhilfsdienst": ["Landesweit"],
+                }
+                for bereich, bezirke in bereichs_map.items():
+                    for bezirk in bezirke:
+                        self.connection.execute(
+                            """
+                            INSERT INTO standorte (land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            ("Niederösterreich", bereich, bezirk, "", "", ""),
+                        )
+
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         cur = self.connection.execute(f"PRAGMA table_info({table})")
         if column in {row[1] for row in cur.fetchall()}:
             return
         self.connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    @staticmethod
+    def _location_label_from_row(row: sqlite3.Row, prefix: str = "") -> str:
+        parts: List[str] = []
+        for key in ("land", "bereich", "bezirk", "bezirksstelle", "ortsstelle"):
+            column = f"{prefix}{key}" if prefix else key
+            if column in row.keys():
+                value = row[column]
+                if value:
+                    parts.append(value)
+        return " / ".join(parts)
+
+    def location_label(self, standort_id: Optional[int]) -> str:
+        if not standort_id:
+            return ""
+        if standort_id not in self._location_cache:
+            row = self.connection.execute(
+                "SELECT * FROM standorte WHERE id = ?",
+                (standort_id,),
+            ).fetchone()
+            if not row:
+                return ""
+            self._location_cache[standort_id] = row
+        return self._location_label_from_row(self._location_cache[standort_id])
+
+    def location_label_from_product(self, row: sqlite3.Row) -> str:
+        if "standort_id" in row.keys() and row["standort_id"]:
+            return self.location_label(int(row["standort_id"]))
+        if any(
+            key in row.keys()
+            for key in (
+                "standort_land",
+                "standort_bereich",
+                "standort_bezirk",
+                "standort_bezirksstelle",
+                "standort_ortsstelle",
+            )
+        ):
+            return self._location_label_from_row(row, prefix="standort_")
+        return ""
 
     def ensure_default_admin(self) -> None:
         """Create the default admin user if no users exist."""
@@ -643,6 +743,7 @@ class DatabaseManager:
                 """,
                 (land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung),
             )
+        self._location_cache.clear()
         return int(cur.lastrowid)
 
     def get_location(self, location_id: int) -> Optional[sqlite3.Row]:
@@ -670,6 +771,7 @@ class DatabaseManager:
                 """,
                 (land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung, location_id),
             )
+        self._location_cache.clear()
 
     def delete_location(self, location_id: int) -> None:
         with self.connection:
@@ -677,6 +779,7 @@ class DatabaseManager:
                 "DELETE FROM standorte WHERE id = ?",
                 (location_id,),
             )
+        self._location_cache.clear()
 
     # ------------------------------------------------------------------
     # contacts
@@ -693,26 +796,44 @@ class DatabaseManager:
         telefon: str,
         email: str,
         kontaktperson: str,
+        unternehmen: str,
+        website: str,
+        info: str,
     ) -> int:
         with self.connection:
             if kontakt_id:
                 self.connection.execute(
                     """
                     UPDATE kontakte
-                    SET name = ?, adresse = ?, telefon = ?, email = ?, kontaktperson = ?
+                    SET name = ?, adresse = ?, telefon = ?, email = ?, kontaktperson = ?,
+                        unternehmen = ?, website = ?, info = ?
                     WHERE id = ?
                     """,
-                    (name, adresse, telefon, email, kontaktperson, kontakt_id),
+                    (
+                        name,
+                        adresse,
+                        telefon,
+                        email,
+                        kontaktperson,
+                        unternehmen,
+                        website,
+                        info,
+                        kontakt_id,
+                    ),
                 )
                 return kontakt_id
             cur = self.connection.execute(
                 """
-                INSERT INTO kontakte (name, adresse, telefon, email, kontaktperson)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO kontakte (name, adresse, telefon, email, kontaktperson, unternehmen, website, info)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (name, adresse, telefon, email, kontaktperson),
+                (name, adresse, telefon, email, kontaktperson, unternehmen, website, info),
             )
-            return int(cur.lastrowid)
+        return int(cur.lastrowid)
+
+    def delete_contact(self, kontakt_id: int) -> None:
+        with self.connection:
+            self.connection.execute("DELETE FROM kontakte WHERE id = ?", (kontakt_id,))
 
     # ------------------------------------------------------------------
     # vehicle management
@@ -721,8 +842,16 @@ class DatabaseManager:
         return list(
             self.connection.execute(
                 """
-                SELECT f.*, s.ortsstelle AS standort_name, fm.name AS marke_name,
-                       fmo.name AS fahrzeug_typ_name, fk.name AS fahrzeug_kategorie_name
+                SELECT f.*,
+                       s.land AS standort_land,
+                       s.bereich AS standort_bereich,
+                       s.bezirk AS standort_bezirk,
+                       s.bezirksstelle AS standort_bezirksstelle,
+                       s.ortsstelle AS standort_ortsstelle,
+                       COALESCE(s.ortsstelle, s.bezirksstelle, s.bezirk, s.bereich, s.land, '') AS standort_name,
+                       fm.name AS marke_name,
+                       fmo.name AS fahrzeug_typ_name,
+                       fk.name AS fahrzeug_kategorie_name
                 FROM fahrzeuge AS f
                 LEFT JOIN standorte AS s ON s.id = f.standort_id
                 LEFT JOIN fahrzeug_marken AS fm ON fm.id = f.marke_id
@@ -838,8 +967,17 @@ class DatabaseManager:
         return list(
             self.connection.execute(
                 """
-                SELECT p.*, k.name AS kategorie_name, s.ortsstelle AS standort_name, f.name AS fahrzeug_name,
-                       pt.name AS produkt_typ_name, pm.name AS produkt_modell_name
+                SELECT p.*,
+                       k.name AS kategorie_name,
+                       s.land AS standort_land,
+                       s.bereich AS standort_bereich,
+                       s.bezirk AS standort_bezirk,
+                       s.bezirksstelle AS standort_bezirksstelle,
+                       s.ortsstelle AS standort_ortsstelle,
+                       COALESCE(s.ortsstelle, s.bezirksstelle, s.bezirk, s.bereich, s.land, '') AS standort_name,
+                       f.name AS fahrzeug_name,
+                       pt.name AS produkt_typ_name,
+                       pm.name AS produkt_modell_name
                 FROM produkte AS p
                 LEFT JOIN kategorien AS k ON k.id = p.kategorie_id
                 LEFT JOIN standorte AS s ON s.id = p.standort_id
@@ -854,8 +992,17 @@ class DatabaseManager:
     def get_product(self, produkt_id: int) -> Optional[sqlite3.Row]:
         return self.connection.execute(
             """
-            SELECT p.*, k.name AS kategorie_name, s.ortsstelle AS standort_name, f.name AS fahrzeug_name,
-                   pt.name AS produkt_typ_name, pm.name AS produkt_modell_name
+            SELECT p.*,
+                   k.name AS kategorie_name,
+                   s.land AS standort_land,
+                   s.bereich AS standort_bereich,
+                   s.bezirk AS standort_bezirk,
+                   s.bezirksstelle AS standort_bezirksstelle,
+                   s.ortsstelle AS standort_ortsstelle,
+                   COALESCE(s.ortsstelle, s.bezirksstelle, s.bezirk, s.bereich, s.land, '') AS standort_name,
+                   f.name AS fahrzeug_name,
+                   pt.name AS produkt_typ_name,
+                   pm.name AS produkt_modell_name
             FROM produkte AS p
             LEFT JOIN kategorien AS k ON k.id = p.kategorie_id
             LEFT JOIN standorte AS s ON s.id = p.standort_id
@@ -1046,15 +1193,16 @@ class DatabaseManager:
             "<table class='data'><tbody>",
         ]
 
+        status_label = STATUS_LABELS.get(product["status"], product["status"])
         detail_rows = [
             ("Name", product["name"]),
             ("Typ/Modell", product["typ"] or ""),
             ("Hersteller", product["hersteller"] or ""),
             ("Seriennummer", product["seriennummer"]),
             ("Kategorie", product["kategorie_name"] or ""),
-            ("Standort", product["standort_name"] or ""),
+            ("Standort", self.location_label_from_product(product)),
             ("Fahrzeug", product["fahrzeug_name"] or ""),
-            ("Status", product["status"]),
+            ("Status", status_label),
             ("Interne Kennung", product["interne_kennung"] or ""),
             ("Anschaffungsdatum", product["anschaffungsdatum"] or ""),
             ("STK Intervall", f"{product['stk_intervall']} Monate"),
@@ -1520,6 +1668,146 @@ class DatabaseManager:
         ).fetchall()
         return {row["status"]: row["count"] for row in rows}
 
+    def repair_cost_total(self) -> float:
+        value = self.connection.execute(
+            "SELECT SUM(kosten) AS summe FROM reparaturen WHERE kosten IS NOT NULL"
+        ).fetchone()
+        total = value["summe"] if value and value["summe"] is not None else 0.0
+        return float(total)
+
+    def repair_costs_by_category(self) -> List[Tuple[str, float]]:
+        rows = self.connection.execute(
+            """
+            SELECT COALESCE(k.name, 'Ohne Kategorie') AS kategorie,
+                   SUM(r.kosten) AS summe
+            FROM reparaturen AS r
+            JOIN produkte AS p ON p.id = r.produkt_id
+            LEFT JOIN kategorien AS k ON k.id = p.kategorie_id
+            WHERE r.kosten IS NOT NULL
+            GROUP BY kategorie
+            ORDER BY summe DESC
+            """
+        ).fetchall()
+        return [(row["kategorie"], float(row["summe"] or 0.0)) for row in rows]
+
+    def repair_costs_by_vehicle(self) -> List[Tuple[str, float]]:
+        rows = self.connection.execute(
+            """
+            SELECT COALESCE(f.name, 'Ohne Fahrzeug') AS fahrzeug,
+                   SUM(r.kosten) AS summe
+            FROM reparaturen AS r
+            LEFT JOIN produkte AS p ON p.id = r.produkt_id
+            LEFT JOIN fahrzeuge AS f ON f.id = p.fahrzeug_id
+            WHERE r.kosten IS NOT NULL
+            GROUP BY fahrzeug
+            ORDER BY summe DESC
+            """
+        ).fetchall()
+        return [(row["fahrzeug"], float(row["summe"] or 0.0)) for row in rows]
+
+    def filtered_products(
+        self,
+        *,
+        fahrzeug_id: Optional[int] = None,
+        land: Optional[str] = None,
+        bereich: Optional[str] = None,
+        bezirk: Optional[str] = None,
+        bezirksstelle: Optional[str] = None,
+        ortsstelle: Optional[str] = None,
+    ) -> List[sqlite3.Row]:
+        rows = self.list_products()
+        if fahrzeug_id:
+            rows = [row for row in rows if row["fahrzeug_id"] == fahrzeug_id]
+        if any([land, bereich, bezirk, bezirksstelle, ortsstelle]):
+            location_cache = {row["id"]: row for row in self.list_locations()}
+
+            def matches_location(row: sqlite3.Row) -> bool:
+                standort_id = row["standort_id"] if "standort_id" in row.keys() else None
+                if not standort_id:
+                    return False
+                location = location_cache.get(standort_id)
+                if not location:
+                    return False
+                return all(
+                    (
+                        (value is None)
+                        or (value == "")
+                        or ((location[key] or "") == value)
+                    )
+                    for key, value in [
+                        ("land", land),
+                        ("bereich", bereich),
+                        ("bezirk", bezirk),
+                        ("bezirksstelle", bezirksstelle),
+                        ("ortsstelle", ortsstelle),
+                    ]
+                )
+
+            rows = [row for row in rows if matches_location(row)]
+        return rows
+
+    def export_products_filtered_html(
+        self,
+        *,
+        fahrzeug_id: Optional[int] = None,
+        land: Optional[str] = None,
+        bereich: Optional[str] = None,
+        bezirk: Optional[str] = None,
+        bezirksstelle: Optional[str] = None,
+        ortsstelle: Optional[str] = None,
+        title: str = "Produktliste",
+    ) -> str:
+        rows = self.filtered_products(
+            fahrzeug_id=fahrzeug_id,
+            land=land,
+            bereich=bereich,
+            bezirk=bezirk,
+            bezirksstelle=bezirksstelle,
+            ortsstelle=ortsstelle,
+        )
+        subtitle_parts = []
+        if fahrzeug_id:
+            fahrzeug = self.connection.execute(
+                "SELECT name FROM fahrzeuge WHERE id = ?",
+                (fahrzeug_id,),
+            ).fetchone()
+            if fahrzeug:
+                subtitle_parts.append(f"Fahrzeug: {fahrzeug['name']}")
+        location_parts = [part for part in [land, bereich, bezirk, bezirksstelle, ortsstelle] if part]
+        if location_parts:
+            subtitle_parts.append(f"Standort: {' / '.join(location_parts)}")
+        subtitle = "<p>" + " | ".join(subtitle_parts) + "</p>" if subtitle_parts else ""
+        html_rows = "".join(
+            "<tr>"
+            + "".join(
+                f"<td>{value}</td>"
+                for value in [
+                    row["id"],
+                    row["name"],
+                    row["seriennummer"],
+                    STATUS_LABELS.get(row["status"], row["status"]),
+                    row["kategorie_name"] or "",
+                    self.location_label_from_product(row),
+                    row["fahrzeug_name"] or "",
+                ]
+            )
+            + "</tr>"
+            for row in rows
+        )
+        return "".join(
+            [
+                "<html><head><meta charset='utf-8'>",
+                "<style>body{font-family:Arial,sans-serif;margin:2rem;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ccc;padding:0.5rem;text-align:left;}h1{margin-bottom:0.5rem;}p{margin:0 0 1rem 0;}</style>",
+                "</head><body>",
+                f"<h1>{title}</h1>",
+                subtitle,
+                "<table><thead><tr><th>ID</th><th>Name</th><th>Seriennummer</th><th>Status</th><th>Kategorie</th><th>Standort</th><th>Fahrzeug</th></tr></thead><tbody>",
+                html_rows,
+                "</tbody></table>",
+                "</body></html>",
+            ]
+        )
+
     # ------------------------------------------------------------------
     def export_products_as_csv(self) -> str:
         """Return CSV data for all products."""
@@ -1542,6 +1830,7 @@ class DatabaseManager:
         ]
         lines = [";".join(headers)]
         for row in rows:
+            status_label = STATUS_LABELS.get(row["status"], row["status"] or "")
             lines.append(
                 ";".join(
                     [
@@ -1552,9 +1841,9 @@ class DatabaseManager:
                         row["hersteller"] or "",
                         row["anschaffungsdatum"] or "",
                         row["kategorie_name"] or "",
-                        row["standort_name"] or "",
+                        self.location_label_from_product(row),
                         row["fahrzeug_name"] or "",
-                        row["status"] or "",
+                        status_label,
                         row["interne_kennung"] or "",
                         str(row["stk_intervall"]),
                         str(row["mtk_intervall"]),
@@ -1573,9 +1862,9 @@ class DatabaseManager:
                     row["id"],
                     row["name"],
                     row["seriennummer"],
-                    row["status"],
+                    STATUS_LABELS.get(row["status"], row["status"]),
                     row["kategorie_name"] or "",
-                    row["standort_name"] or "",
+                    self.location_label_from_product(row),
                     row["fahrzeug_name"] or "",
                 ]
             )

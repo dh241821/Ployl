@@ -13,6 +13,7 @@ import sqlite3
 import ttkbootstrap as ttkb
 from ttkbootstrap.constants import BOTH, LEFT, RIGHT, W
 from ttkbootstrap.dialogs import Messagebox
+from ttkbootstrap.widgets import DateEntry
 from ttkbootstrap.widgets.tableview import Tableview
 
 from app.database import DatabaseManager, User
@@ -28,6 +29,14 @@ DATE_FORMAT = "%d.%m.%Y"
 REPAIR_STORAGE = Path("storage/reparaturen")
 REPAIR_STORAGE.mkdir(parents=True, exist_ok=True)
 
+STATUS_OPTIONS: List[Tuple[str, str]] = [
+    ("Im Dienst", "im_dienst"),
+    ("In Reparatur", "in_reparatur"),
+    ("Ausgeschieden", "ausgeschieden"),
+]
+STATUS_LABEL_TO_VALUE = {label: value for label, value in STATUS_OPTIONS}
+STATUS_VALUE_TO_LABEL = {value: label for label, value in STATUS_OPTIONS}
+
 
 def parse_date(value: str) -> Optional[date]:
     value = value.strip()
@@ -40,6 +49,12 @@ def format_date(value: Optional[str]) -> str:
     if not value:
         return ""
     return datetime.strptime(value, "%Y-%m-%d").strftime(DATE_FORMAT)
+
+
+def display_status(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return STATUS_VALUE_TO_LABEL.get(value, value)
 
 
 class LoginDialog(ttkb.Toplevel):
@@ -174,8 +189,14 @@ class DashboardView(ttkb.Frame):
             for row in rows:
                 table.insert_row(values=row)
 
-        fill(self.due_table, ((row["name"], row["status"], row["seriennummer"]) for row in due))
-        fill(self.repair_table, ((row["name"], row["status"], row["seriennummer"]) for row in repairs))
+        fill(
+            self.due_table,
+            ((row["name"], display_status(row["status"]), row["seriennummer"]) for row in due),
+        )
+        fill(
+            self.repair_table,
+            ((row["name"], display_status(row["status"]), row["seriennummer"]) for row in repairs),
+        )
         fill(self.expired_table, ((row["name"], format_date(row["verfallsdatum"]), row["lagerort"]) for row in expired))
         fill(self.low_table, ((row["name"], f"{row['ist_bestand']}/{row['soll_bestand']}", row["lagerort"]) for row in low))
 
@@ -183,15 +204,16 @@ class DashboardView(ttkb.Frame):
         statuses = list(status_counts.keys())
         values = list(status_counts.values())
         if not statuses:
-            statuses = ["Keine Daten"]
+            statuses = ["im_dienst"]
             values = [0]
         color_map = {
             "im_dienst": "#198754",
             "in_reparatur": "#FFC107",
             "ausgeschieden": "#6c757d",
         }
+        labels = [display_status(status) for status in statuses]
         colors = [color_map.get(status, "#0d6efd") for status in statuses]
-        self.ax.bar(statuses, values, color=colors)
+        self.ax.bar(labels, values, color=colors)
         self.ax.set_ylabel("Anzahl")
         self.ax.set_title("Status-Verteilung")
         self.canvas.draw()
@@ -247,8 +269,9 @@ class ProductsView(ttkb.Frame):
         status_box = ttkb.Combobox(
             toolbar,
             textvariable=self.status_var,
-            values=("", "im_dienst", "in_reparatur", "ausgeschieden"),
-            width=15,
+            values=[""] + [label for label, _ in STATUS_OPTIONS],
+            width=18,
+            state="readonly",
         )
         status_box.pack(side=LEFT)
         status_box.set("")
@@ -293,7 +316,8 @@ class ProductsView(ttkb.Frame):
     def refresh(self) -> None:
         self.table.delete_rows()
         query = self.search_var.get().strip().lower()
-        status_filter = self.status_var.get().strip()
+        status_label = self.status_var.get().strip()
+        status_filter = STATUS_LABEL_TO_VALUE.get(status_label, "") if status_label else ""
         hide_retired = self.hide_retired.get()
         for row in self.db.list_products():
             haystack = " ".join(
@@ -317,6 +341,8 @@ class ProductsView(ttkb.Frame):
                 continue
             if hide_retired and row["status"] == "ausgeschieden":
                 continue
+            status_label_value = display_status(row["status"])
+            location_label = self.db.location_label_from_product(row)
             self.table.insert_row(
                 values=(
                     row["id"],
@@ -324,8 +350,8 @@ class ProductsView(ttkb.Frame):
                     row["produkt_typ_name"] or row["typ"] or "",
                     row["produkt_modell_name"] or "",
                     row["seriennummer"],
-                    row["status"],
-                    row["standort_name"] or "",
+                    status_label_value,
+                    location_label,
                     row["fahrzeug_name"] or "",
                     row["lagerort"] or "",
                     row["interne_kennung"] or "",
@@ -546,7 +572,12 @@ class VehiclesView(ttkb.Frame):
         current_location = self.location_filter.get()
         current_type = self.type_filter.get()
         current_category = self.category_filter.get()
-        location_values = ["Alle"] + [self._format_location_from_row(row) for row in self.locations]
+        location_values = [
+            "Alle"
+        ] + [
+            self.db.location_label(row["id"]) or f"Standort #{row['id']}"
+            for row in self.locations
+        ]
         type_values = ["Alle"] + sorted({row["name"] for row in self.vehicle_models})
         category_values = ["Alle"] + [row["name"] for row in self.vehicle_categories]
         self.location_box.configure(values=location_values)
@@ -572,6 +603,7 @@ class VehiclesView(ttkb.Frame):
             vehicle_category = row["fahrzeug_kategorie_name"] or row["kategorie"] or ""
             if category_filter != "Alle" and vehicle_category != category_filter:
                 continue
+            status_label = display_status(row["status"])
             self.table.insert_row(
                 values=(
                     row["id"],
@@ -580,7 +612,7 @@ class VehiclesView(ttkb.Frame):
                     vehicle_category,
                     location_label,
                     row["kennzeichen"] or "",
-                    row["status"],
+                    status_label,
                     row["kilometerstand"],
                 )
             )
@@ -601,15 +633,12 @@ class VehiclesView(ttkb.Frame):
             self.refresh()
 
     def _format_location(self, row: sqlite3.Row) -> str:
+        if "standort_id" in row.keys() and row["standort_id"]:
+            label = self.db.location_label(int(row["standort_id"]))
+            if label:
+                return label
         if "standort_name" in row.keys() and row["standort_name"]:
             return row["standort_name"]
-        standort_id = row["standort_id"] if "standort_id" in row.keys() else None
-        if standort_id:
-            for loc in self.locations:
-                if loc["id"] == standort_id:
-                    parts = [loc["bezirksstelle"], loc["ortsstelle"]]
-                    label = " - ".join(filter(None, parts))
-                    return label or f"Standort #{standort_id}"
         return ""
 
 
@@ -679,6 +708,252 @@ class MaterialsView(ttkb.Frame):
         if editor.saved:
             self.refresh()
 
+
+class AnalyticsView(ttkb.Frame):
+    def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
+        super().__init__(master)
+        self.db = db
+        self.vehicles: List[sqlite3.Row] = []
+        self.locations: List[sqlite3.Row] = []
+        self.vehicle_options: Dict[str, int] = {}
+
+        summary_frame = ttkb.Frame(self)
+        summary_frame.pack(fill=tk.X, padx=20, pady=15)
+        self.total_label = ttkb.Label(summary_frame, text="Reparaturkosten gesamt: 0,00 €", font=("Inter", 14, "bold"))
+        self.total_label.pack(anchor=W)
+
+        tables_frame = ttkb.Frame(self)
+        tables_frame.pack(fill=BOTH, expand=True, padx=20, pady=10)
+
+        status_frame = ttkb.Labelframe(tables_frame, text="Statusübersicht")
+        status_frame.pack(fill=BOTH, expand=True, side=LEFT, padx=10, pady=10)
+        self.status_table = Tableview(
+            status_frame,
+            coldata=[{"text": "Status"}, {"text": "Anzahl"}],
+            rowdata=[],
+            pagesize=10,
+        )
+        self.status_table.pack(fill=BOTH, expand=True)
+
+        category_frame = ttkb.Labelframe(tables_frame, text="Reparaturkosten je Kategorie")
+        category_frame.pack(fill=BOTH, expand=True, side=LEFT, padx=10, pady=10)
+        self.category_table = Tableview(
+            category_frame,
+            coldata=[{"text": "Kategorie"}, {"text": "Summe"}],
+            rowdata=[],
+            pagesize=10,
+        )
+        self.category_table.pack(fill=BOTH, expand=True)
+
+        vehicle_frame = ttkb.Labelframe(tables_frame, text="Reparaturkosten je Fahrzeug")
+        vehicle_frame.pack(fill=BOTH, expand=True, side=LEFT, padx=10, pady=10)
+        self.vehicle_table = Tableview(
+            vehicle_frame,
+            coldata=[{"text": "Fahrzeug"}, {"text": "Summe"}],
+            rowdata=[],
+            pagesize=10,
+        )
+        self.vehicle_table.pack(fill=BOTH, expand=True)
+
+        export_frame = ttkb.Labelframe(self, text="Produktlisten drucken")
+        export_frame.pack(fill=BOTH, expand=False, padx=20, pady=(5, 20))
+
+        vehicle_export = ttkb.Frame(export_frame)
+        vehicle_export.pack(fill=tk.X, padx=10, pady=10)
+        ttkb.Label(vehicle_export, text="Fahrzeug").pack(side=LEFT)
+        self.vehicle_var = ttkb.StringVar()
+        self.vehicle_combo = ttkb.Combobox(vehicle_export, textvariable=self.vehicle_var, state="readonly", width=40)
+        self.vehicle_combo.pack(side=LEFT, padx=5)
+        ttkb.Button(vehicle_export, text="Produkte drucken", command=self.export_vehicle_products, bootstyle="primary").pack(side=LEFT, padx=5)
+
+        location_export = ttkb.Frame(export_frame)
+        location_export.pack(fill=tk.X, padx=10, pady=(10, 5))
+
+        self.land_var = ttkb.StringVar()
+        self.bereich_var = ttkb.StringVar()
+        self.bezirk_var = ttkb.StringVar()
+        self.bezirksstelle_var = ttkb.StringVar()
+        self.ortsstelle_var = ttkb.StringVar()
+
+        ttkb.Label(location_export, text="Land").grid(row=0, column=0, sticky=W, padx=2, pady=2)
+        self.land_combo = ttkb.Combobox(location_export, textvariable=self.land_var, state="readonly", width=22)
+        self.land_combo.grid(row=0, column=1, sticky=W, padx=2)
+
+        ttkb.Label(location_export, text="Bereich").grid(row=0, column=2, sticky=W, padx=2)
+        self.bereich_combo = ttkb.Combobox(location_export, textvariable=self.bereich_var, state="readonly", width=22)
+        self.bereich_combo.grid(row=0, column=3, sticky=W, padx=2)
+
+        ttkb.Label(location_export, text="Bezirk").grid(row=1, column=0, sticky=W, padx=2, pady=2)
+        self.bezirk_combo = ttkb.Combobox(location_export, textvariable=self.bezirk_var, state="readonly", width=22)
+        self.bezirk_combo.grid(row=1, column=1, sticky=W, padx=2)
+
+        ttkb.Label(location_export, text="Bezirksstelle").grid(row=1, column=2, sticky=W, padx=2)
+        self.bezirksstelle_combo = ttkb.Combobox(location_export, textvariable=self.bezirksstelle_var, state="readonly", width=22)
+        self.bezirksstelle_combo.grid(row=1, column=3, sticky=W, padx=2)
+
+        ttkb.Label(location_export, text="Ortsstelle").grid(row=2, column=0, sticky=W, padx=2, pady=2)
+        self.ortsstelle_combo = ttkb.Combobox(location_export, textvariable=self.ortsstelle_var, state="readonly", width=22)
+        self.ortsstelle_combo.grid(row=2, column=1, sticky=W, padx=2)
+
+        ttkb.Button(location_export, text="Standort drucken", command=self.export_location_products, bootstyle="primary").grid(row=2, column=3, sticky=W, padx=2, pady=5)
+
+        for var in (
+            self.land_var,
+            self.bereich_var,
+            self.bezirk_var,
+            self.bezirksstelle_var,
+        ):
+            var.trace_add("write", self._update_location_options)
+
+    @staticmethod
+    def _format_currency(value: float) -> str:
+        formatted = f"{value:,.2f}".replace(",", " ")
+        return formatted.replace(".", ",") + " €"
+
+    def refresh(self) -> None:
+        total = self.db.repair_cost_total()
+        self.total_label.configure(text=f"Reparaturkosten gesamt: {self._format_currency(total)}")
+
+        for table in (self.status_table, self.category_table, self.vehicle_table):
+            table.delete_rows()
+
+        for status, count in self.db.product_status_counts().items():
+            self.status_table.insert_row(values=(display_status(status), count))
+
+        for kategorie, summe in self.db.repair_costs_by_category():
+            self.category_table.insert_row(values=(kategorie, self._format_currency(summe)))
+
+        for fahrzeug, summe in self.db.repair_costs_by_vehicle():
+            self.vehicle_table.insert_row(values=(fahrzeug, self._format_currency(summe)))
+
+        self.vehicles = self.db.list_vehicles()
+        self.vehicle_options = {}
+        vehicle_labels: List[str] = [""]
+        for row in self.vehicles:
+            label = row["name"]
+            if row["kennzeichen"]:
+                label += f" ({row['kennzeichen']})"
+            vehicle_labels.append(label)
+            self.vehicle_options[label] = row["id"]
+        current_vehicle = self.vehicle_var.get()
+        self.vehicle_combo.configure(values=vehicle_labels)
+        if current_vehicle not in vehicle_labels:
+            self.vehicle_var.set("")
+
+        self.locations = self.db.list_locations()
+        self._update_location_options()
+
+    def _update_location_options(self, *_: object) -> None:
+        land = self.land_var.get().strip()
+        bereich = self.bereich_var.get().strip()
+        bezirk = self.bezirk_var.get().strip()
+        bezirksstelle = self.bezirksstelle_var.get().strip()
+
+        land_values = sorted({row["land"] for row in self.locations if row["land"]})
+        bereich_values = sorted(
+            {
+                row["bereich"]
+                for row in self.locations
+                if row["bereich"] and (not land or row["land"] == land)
+            }
+        )
+        bezirk_values = sorted(
+            {
+                row["bezirk"]
+                for row in self.locations
+                if row["bezirk"]
+                and (not land or row["land"] == land)
+                and (not bereich or row["bereich"] == bereich)
+            }
+        )
+        bezirksstelle_values = sorted(
+            {
+                row["bezirksstelle"]
+                for row in self.locations
+                if row["bezirksstelle"]
+                and (not land or row["land"] == land)
+                and (not bereich or row["bereich"] == bereich)
+                and (not bezirk or row["bezirk"] == bezirk)
+            }
+        )
+        ortsstelle_values = sorted(
+            {
+                row["ortsstelle"]
+                for row in self.locations
+                if row["ortsstelle"]
+                and (not land or row["land"] == land)
+                and (not bereich or row["bereich"] == bereich)
+                and (not bezirk or row["bezirk"] == bezirk)
+                and (not bezirksstelle or row["bezirksstelle"] == bezirksstelle)
+            }
+        )
+
+        self.land_combo.configure(values=[""] + land_values)
+        self.bereich_combo.configure(values=[""] + bereich_values)
+        self.bezirk_combo.configure(values=[""] + bezirk_values)
+        self.bezirksstelle_combo.configure(values=[""] + bezirksstelle_values)
+        self.ortsstelle_combo.configure(values=[""] + ortsstelle_values)
+
+        if land not in self.land_combo.cget("values"):
+            self.land_var.set("")
+        if bereich not in self.bereich_combo.cget("values"):
+            self.bereich_var.set("")
+        if bezirk not in self.bezirk_combo.cget("values"):
+            self.bezirk_var.set("")
+        if bezirksstelle not in self.bezirksstelle_combo.cget("values"):
+            self.bezirksstelle_var.set("")
+        if self.ortsstelle_var.get() not in self.ortsstelle_combo.cget("values"):
+            self.ortsstelle_var.set("")
+
+    def export_vehicle_products(self) -> None:
+        label = self.vehicle_var.get().strip()
+        if not label or label not in self.vehicle_options:
+            Messagebox.show_info("Bitte ein Fahrzeug auswählen", "Hinweis")
+            return
+        fahrzeug_id = self.vehicle_options[label]
+        filepath = filedialog.asksaveasfilename(
+            title="Produkte nach Fahrzeug drucken",
+            defaultextension=".html",
+            filetypes=[("HTML", "*.html")],
+        )
+        if not filepath:
+            return
+        html = self.db.export_products_filtered_html(
+            fahrzeug_id=fahrzeug_id,
+            title=f"Produkte für {label}",
+        )
+        Path(filepath).write_text(html, encoding="utf-8")
+        Messagebox.show_info("Export abgeschlossen", "Erfolg")
+
+    def export_location_products(self) -> None:
+        land = self.land_var.get().strip() or None
+        bereich = self.bereich_var.get().strip() or None
+        bezirk = self.bezirk_var.get().strip() or None
+        bezirksstelle = self.bezirksstelle_var.get().strip() or None
+        ortsstelle = self.ortsstelle_var.get().strip() or None
+
+        if not any([land, bereich, bezirk, bezirksstelle, ortsstelle]):
+            Messagebox.show_info("Bitte mindestens eine Ebene auswählen", "Hinweis")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            title="Produkte nach Standort drucken",
+            defaultextension=".html",
+            filetypes=[("HTML", "*.html")],
+        )
+        if not filepath:
+            return
+
+        html = self.db.export_products_filtered_html(
+            land=land,
+            bereich=bereich,
+            bezirk=bezirk,
+            bezirksstelle=bezirksstelle,
+            ortsstelle=ortsstelle,
+            title="Produkte nach Standort",
+        )
+        Path(filepath).write_text(html, encoding="utf-8")
+        Messagebox.show_info("Export abgeschlossen", "Erfolg")
 
 class MasterDataView(ttkb.Frame):
     def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
@@ -895,38 +1170,96 @@ class ContactsFrame(ttkb.Frame):
         toolbar = ttkb.Frame(self)
         toolbar.pack(fill=tk.X, padx=10, pady=10)
         ttkb.Button(toolbar, text="Kontakt hinzufügen", command=self.add_contact, bootstyle="success").pack(side=LEFT)
+        ttkb.Button(toolbar, text="Bearbeiten", command=self.edit_contact, bootstyle="secondary").pack(side=LEFT, padx=5)
+        ttkb.Button(toolbar, text="Löschen", command=self.delete_contact, bootstyle="danger").pack(side=LEFT)
 
         columns = [
             {"text": "ID"},
             {"text": "Name"},
+            {"text": "Unternehmen"},
             {"text": "Telefon"},
             {"text": "E-Mail"},
+            {"text": "Website"},
+            {"text": "Kontaktperson"},
         ]
         self.table = Tableview(self, coldata=columns, rowdata=[], pagesize=20)
         self.table.pack(fill=BOTH, expand=True, padx=10, pady=10)
+        self.table.bind("<Double-1>", lambda _event: self.edit_contact())
 
     def refresh(self) -> None:
         self.table.delete_rows()
         for row in self.db.list_contacts():
             self.table.insert_row(
-                values=(row["id"], row["name"], row["telefon"] or "", row["email"] or "")
+                values=(
+                    row["id"],
+                    row["name"],
+                    row["unternehmen"] or "",
+                    row["telefon"] or "",
+                    row["email"] or "",
+                    row["website"] or "",
+                    row["kontaktperson"] or "",
+                )
             )
 
     def add_contact(self) -> None:
-        fields = ["Name", "Adresse", "Telefon", "E-Mail", "Kontaktperson"]
-        dialog = SimpleEntryDialog(self, "Neuer Kontakt", fields)
+        dialog = ContactDialog(self)
         self.wait_window(dialog)
         if dialog.result:
-            name, adresse, telefon, email, kontaktperson = dialog.result
+            data = dialog.result
             self.db.add_or_update_contact(
                 kontakt_id=None,
-                name=name,
-                adresse=adresse,
-                telefon=telefon,
-                email=email,
-                kontaktperson=kontaktperson,
+                name=data["name"],
+                adresse=data["adresse"],
+                telefon=data["telefon"],
+                email=data["email"],
+                kontaktperson=data["kontaktperson"],
+                unternehmen=data["unternehmen"],
+                website=data["website"],
+                info=data["info"],
             )
             self.refresh()
+
+    def edit_contact(self) -> None:
+        kontakt_id = self._selected_contact_id()
+        if not kontakt_id:
+            return
+        contact = next((row for row in self.db.list_contacts() if row["id"] == kontakt_id), None)
+        if not contact:
+            Messagebox.show_error("Kontakt nicht gefunden", "Fehler")
+            return
+        dialog = ContactDialog(self, contact)
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        data = dialog.result
+        self.db.add_or_update_contact(
+            kontakt_id=kontakt_id,
+            name=data["name"],
+            adresse=data["adresse"],
+            telefon=data["telefon"],
+            email=data["email"],
+            kontaktperson=data["kontaktperson"],
+            unternehmen=data["unternehmen"],
+            website=data["website"],
+            info=data["info"],
+        )
+        self.refresh()
+
+    def delete_contact(self) -> None:
+        kontakt_id = self._selected_contact_id()
+        if not kontakt_id:
+            return
+        if Messagebox.okcancel("Kontakt wirklich löschen?", "Bestätigung", alert=True) != "OK":
+            return
+        self.db.delete_contact(kontakt_id)
+        self.refresh()
+
+    def _selected_contact_id(self) -> Optional[int]:
+        rows = self.table.get_rows("selected")
+        if not rows:
+            Messagebox.show_info("Bitte einen Kontakt auswählen", "Hinweis")
+            return None
+        return int(rows[0].values[0])
 
 
 class SimpleLookupFrame(ttkb.Frame):
@@ -1368,6 +1701,75 @@ class SimpleEntryDialog(ttkb.Toplevel):
         self.destroy()
 
 
+class ContactDialog(ttkb.Toplevel):
+    def __init__(self, master: tk.Misc, data: Optional[sqlite3.Row] = None) -> None:
+        super().__init__(master)
+        self.title("Kontakt")
+        self.resizable(False, False)
+        self.result: Optional[Dict[str, str]] = None
+
+        container = ttkb.Frame(self, padding=20)
+        container.pack(fill=BOTH, expand=True)
+
+        self.name_var = ttkb.StringVar(value=(data["name"] if data else ""))
+        self.company_var = ttkb.StringVar(value=(data["unternehmen"] if data else ""))
+        self.address_var = ttkb.StringVar(value=(data["adresse"] if data else ""))
+        self.phone_var = ttkb.StringVar(value=(data["telefon"] if data else ""))
+        self.mail_var = ttkb.StringVar(value=(data["email"] if data else ""))
+        self.website_var = ttkb.StringVar(value=(data["website"] if data else ""))
+        self.contact_person_var = ttkb.StringVar(value=(data["kontaktperson"] if data else ""))
+
+        ttkb.Label(container, text="Name*").grid(row=0, column=0, sticky=W, pady=5)
+        ttkb.Entry(container, textvariable=self.name_var, width=40).grid(row=0, column=1, sticky=W)
+
+        ttkb.Label(container, text="Unternehmen").grid(row=1, column=0, sticky=W, pady=5)
+        ttkb.Entry(container, textvariable=self.company_var, width=40).grid(row=1, column=1, sticky=W)
+
+        ttkb.Label(container, text="Adresse").grid(row=2, column=0, sticky=W, pady=5)
+        ttkb.Entry(container, textvariable=self.address_var, width=40).grid(row=2, column=1, sticky=W)
+
+        ttkb.Label(container, text="Telefon").grid(row=3, column=0, sticky=W, pady=5)
+        ttkb.Entry(container, textvariable=self.phone_var, width=40).grid(row=3, column=1, sticky=W)
+
+        ttkb.Label(container, text="E-Mail").grid(row=4, column=0, sticky=W, pady=5)
+        ttkb.Entry(container, textvariable=self.mail_var, width=40).grid(row=4, column=1, sticky=W)
+
+        ttkb.Label(container, text="Website").grid(row=5, column=0, sticky=W, pady=5)
+        ttkb.Entry(container, textvariable=self.website_var, width=40).grid(row=5, column=1, sticky=W)
+
+        ttkb.Label(container, text="Kontaktperson").grid(row=6, column=0, sticky=W, pady=5)
+        ttkb.Entry(container, textvariable=self.contact_person_var, width=40).grid(row=6, column=1, sticky=W)
+
+        ttkb.Label(container, text="Info").grid(row=7, column=0, sticky=W, pady=5)
+        self.info_text = tk.Text(container, height=4, width=38, wrap="word")
+        self.info_text.grid(row=7, column=1, sticky=W)
+        if data and data["info"]:
+            self.info_text.insert(tk.END, data["info"])
+
+        button_frame = ttkb.Frame(container)
+        button_frame.grid(row=8, column=0, columnspan=2, pady=(20, 0))
+        ttkb.Button(button_frame, text="Speichern", command=self.on_save, bootstyle="success").pack(side=LEFT, padx=5)
+        ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(side=LEFT, padx=5)
+
+        self.grab_set()
+
+    def on_save(self) -> None:
+        name = self.name_var.get().strip()
+        if not name:
+            Messagebox.show_warning("Bitte einen Namen angeben", "Hinweis")
+            return
+        self.result = {
+            "name": name,
+            "unternehmen": self.company_var.get().strip(),
+            "adresse": self.address_var.get().strip(),
+            "telefon": self.phone_var.get().strip(),
+            "email": self.mail_var.get().strip(),
+            "website": self.website_var.get().strip(),
+            "kontaktperson": self.contact_person_var.get().strip(),
+            "info": self.info_text.get("1.0", tk.END).strip(),
+        }
+        self.destroy()
+
 class ProductModelDialog(ttkb.Toplevel):
     def __init__(self, master: tk.Misc, product_types: List[sqlite3.Row]) -> None:
         super().__init__(master)
@@ -1539,7 +1941,13 @@ class RetireProductDialog(ttkb.Toplevel):
 
         ttkb.Label(container, text="Datum (TT.MM.JJJJ)").grid(row=0, column=0, sticky=W, pady=5)
         self.date_var = ttkb.StringVar(value=date.today().strftime(DATE_FORMAT))
-        ttkb.Entry(container, textvariable=self.date_var, width=25).grid(row=0, column=1, sticky=W)
+        self.date_entry = DateEntry(
+            container,
+            textvariable=self.date_var,
+            dateformat=DATE_FORMAT,
+            width=18,
+        )
+        self.date_entry.grid(row=0, column=1, sticky=W)
 
         ttkb.Label(container, text="Grund").grid(row=1, column=0, sticky=W, pady=5)
         self.reason_var = ttkb.StringVar()
@@ -1735,7 +2143,8 @@ class ProductEditor(ttkb.Toplevel):
         self.standort_var = ttkb.StringVar()
         self.fahrzeug_var = ttkb.StringVar()
         self.lagerort_var = ttkb.StringVar()
-        self.status_var = ttkb.StringVar(value="im_dienst")
+        default_status_label = STATUS_VALUE_TO_LABEL.get("im_dienst", STATUS_OPTIONS[0][0])
+        self.status_var = ttkb.StringVar(value=default_status_label)
         self.interne_kennung_var = ttkb.StringVar()
         self.information_var = ttkb.StringVar()
 
@@ -1774,9 +2183,15 @@ class ProductEditor(ttkb.Toplevel):
         ttkb.Entry(info_frame, textvariable=self.hersteller_var, width=40).grid(row=3, column=1, sticky=W)
 
         ttkb.Label(info_frame, text="Anschaffungsdatum (TT.MM.JJJJ)").grid(row=4, column=0, sticky=W, pady=4)
-        ttkb.Entry(info_frame, textvariable=self.anschaffungsdatum_var, width=40).grid(
-            row=4, column=1, sticky=W
+        self.anschaffungsdatum_entry = DateEntry(
+            info_frame,
+            textvariable=self.anschaffungsdatum_var,
+            dateformat=DATE_FORMAT,
+            width=18,
         )
+        self.anschaffungsdatum_entry.grid(row=4, column=1, sticky=W)
+        if not self.anschaffungsdatum_var.get():
+            self.anschaffungsdatum_entry.entry.delete(0, tk.END)
 
         ttkb.Label(info_frame, text="Kategorie").grid(row=5, column=0, sticky=W, pady=4)
         self.kategorie_box = ttkb.Combobox(
@@ -1804,11 +2219,25 @@ class ProductEditor(ttkb.Toplevel):
         self.stk_interval_entry = ttkb.Entry(stk_frame, textvariable=self.stk_interval_var, width=10)
         self.stk_interval_entry.grid(row=1, column=1, sticky=W)
         ttkb.Label(stk_frame, text="Letzte STK").grid(row=0, column=1, padx=(20, 5), sticky=W)
-        self.stk_last_entry = ttkb.Entry(stk_frame, textvariable=self.stk_last_var, width=18)
+        self.stk_last_entry = DateEntry(
+            stk_frame,
+            textvariable=self.stk_last_var,
+            dateformat=DATE_FORMAT,
+            width=16,
+        )
         self.stk_last_entry.grid(row=0, column=2, sticky=W)
+        if not self.stk_last_var.get():
+            self.stk_last_entry.entry.delete(0, tk.END)
         ttkb.Label(stk_frame, text="Nächste STK").grid(row=0, column=3, padx=(20, 5), sticky=W)
-        self.stk_next_entry = ttkb.Entry(stk_frame, textvariable=self.stk_next_var, width=18)
+        self.stk_next_entry = DateEntry(
+            stk_frame,
+            textvariable=self.stk_next_var,
+            dateformat=DATE_FORMAT,
+            width=16,
+        )
         self.stk_next_entry.grid(row=0, column=4, sticky=W)
+        if not self.stk_next_var.get():
+            self.stk_next_entry.entry.delete(0, tk.END)
         ttkb.Button(
             stk_frame,
             text="Berechnen",
@@ -1831,11 +2260,25 @@ class ProductEditor(ttkb.Toplevel):
         self.mtk_interval_entry = ttkb.Entry(mtk_frame, textvariable=self.mtk_interval_var, width=10)
         self.mtk_interval_entry.grid(row=1, column=1, sticky=W)
         ttkb.Label(mtk_frame, text="Letzte MTK").grid(row=0, column=1, padx=(20, 5), sticky=W)
-        self.mtk_last_entry = ttkb.Entry(mtk_frame, textvariable=self.mtk_last_var, width=18)
+        self.mtk_last_entry = DateEntry(
+            mtk_frame,
+            textvariable=self.mtk_last_var,
+            dateformat=DATE_FORMAT,
+            width=16,
+        )
         self.mtk_last_entry.grid(row=0, column=2, sticky=W)
+        if not self.mtk_last_var.get():
+            self.mtk_last_entry.entry.delete(0, tk.END)
         ttkb.Label(mtk_frame, text="Nächste MTK").grid(row=0, column=3, padx=(20, 5), sticky=W)
-        self.mtk_next_entry = ttkb.Entry(mtk_frame, textvariable=self.mtk_next_var, width=18)
+        self.mtk_next_entry = DateEntry(
+            mtk_frame,
+            textvariable=self.mtk_next_var,
+            dateformat=DATE_FORMAT,
+            width=16,
+        )
         self.mtk_next_entry.grid(row=0, column=4, sticky=W)
+        if not self.mtk_next_var.get():
+            self.mtk_next_entry.entry.delete(0, tk.END)
         ttkb.Button(
             mtk_frame,
             text="Berechnen",
@@ -1877,7 +2320,7 @@ class ProductEditor(ttkb.Toplevel):
         self.status_box = ttkb.Combobox(
             assignment_frame,
             textvariable=self.status_var,
-            values=["im_dienst", "in_reparatur", "ausgeschieden"],
+            values=[label for label, _ in STATUS_OPTIONS],
             width=20,
             state="readonly",
         )
@@ -1897,8 +2340,9 @@ class ProductEditor(ttkb.Toplevel):
         self._update_mtk_state()
 
     def _format_location(self, row: sqlite3.Row) -> str:
-        parts = [row["bezirksstelle"], row["ortsstelle"]]
-        label = " - ".join(filter(None, parts)) or f"Standort #{row['id']}"
+        label = self.db.location_label(row["id"])
+        if not label:
+            label = f"Standort #{row['id']}"
         return f"{label} (#{row['id']})"
 
     def _format_vehicle(self, row: sqlite3.Row) -> str:
@@ -1928,11 +2372,15 @@ class ProductEditor(ttkb.Toplevel):
         state = tk.NORMAL if self.stk_active.get() else tk.DISABLED
         for widget in [self.stk_interval_entry, self.stk_last_entry, self.stk_next_entry]:
             widget.configure(state=state)
+            if hasattr(widget, "entry"):
+                widget.entry.configure(state=state)
 
     def _update_mtk_state(self) -> None:
         state = tk.NORMAL if self.mtk_active.get() else tk.DISABLED
         for widget in [self.mtk_interval_entry, self.mtk_last_entry, self.mtk_next_entry]:
             widget.configure(state=state)
+            if hasattr(widget, "entry"):
+                widget.entry.configure(state=state)
 
     def _calculate_next_due(
         self,
@@ -1993,6 +2441,8 @@ class ProductEditor(ttkb.Toplevel):
         self.seriennummer_var.set(product["seriennummer"] or "")
         self.hersteller_var.set(product["hersteller"] or "")
         self.anschaffungsdatum_var.set(format_date(product["anschaffungsdatum"]))
+        if not self.anschaffungsdatum_var.get():
+            self.anschaffungsdatum_entry.entry.delete(0, tk.END)
         if product["kategorie_name"]:
             self.kategorie_var.set(product["kategorie_name"])
         if product["standort_id"]:
@@ -2006,7 +2456,8 @@ class ProductEditor(ttkb.Toplevel):
                     self.fahrzeug_var.set(self._format_vehicle(row))
                     break
         self.lagerort_var.set(product["lagerort"] or "")
-        self.status_var.set(product["status"] or "im_dienst")
+        status_value = product["status"] or "im_dienst"
+        self.status_var.set(display_status(status_value))
         self.interne_kennung_var.set(product["interne_kennung"] or "")
         self.info_text.delete("1.0", tk.END)
         self.info_text.insert(tk.END, product["informationstext"] or "")
@@ -2014,11 +2465,19 @@ class ProductEditor(ttkb.Toplevel):
         self.stk_active.set(bool(product["stk_aktiv"]))
         self.stk_interval_var.set(str(product["stk_intervall"] or ""))
         self.stk_last_var.set(format_date(product["letzte_stk"]))
+        if not self.stk_last_var.get():
+            self.stk_last_entry.entry.delete(0, tk.END)
         self.stk_next_var.set(format_date(product["naechste_stk"]))
+        if not self.stk_next_var.get():
+            self.stk_next_entry.entry.delete(0, tk.END)
         self.mtk_active.set(bool(product["mtk_aktiv"]))
         self.mtk_interval_var.set(str(product["mtk_intervall"] or ""))
         self.mtk_last_var.set(format_date(product["letzte_mtk"]))
+        if not self.mtk_last_var.get():
+            self.mtk_last_entry.entry.delete(0, tk.END)
         self.mtk_next_var.set(format_date(product["naechste_mtk"]))
+        if not self.mtk_next_var.get():
+            self.mtk_next_entry.entry.delete(0, tk.END)
 
         self._update_stk_state()
         self._update_mtk_state()
@@ -2118,6 +2577,7 @@ class ProductEditor(ttkb.Toplevel):
                     break
 
         informationstext = self.info_text.get("1.0", tk.END).strip()
+        status_value = STATUS_LABEL_TO_VALUE.get(self.status_var.get(), "im_dienst")
 
         try:
             produkt_id = self.db.add_or_update_product(
@@ -2130,7 +2590,7 @@ class ProductEditor(ttkb.Toplevel):
                 kategorie_id=kategorie_id,
                 standort_id=standort_id,
                 fahrzeug_id=fahrzeug_id,
-                status=self.status_var.get() or "im_dienst",
+                status=status_value,
                 interne_kennung=self.interne_kennung_var.get(),
                 stk_intervall=stk_intervall,
                 mtk_intervall=mtk_intervall,
@@ -2351,9 +2811,15 @@ class ComponentFormDialog(ttkb.Toplevel):
         ttkb.Entry(container, textvariable=self.seriennummer_var, width=40).grid(row=3, column=1, sticky=W)
 
         ttkb.Label(container, text="Anschaffungsdatum (TT.MM.JJJJ)").grid(row=4, column=0, sticky=W, pady=5)
-        ttkb.Entry(container, textvariable=self.anschaffungsdatum_var, width=40).grid(
-            row=4, column=1, sticky=W
+        self.anschaffungsdatum_entry = DateEntry(
+            container,
+            textvariable=self.anschaffungsdatum_var,
+            dateformat=DATE_FORMAT,
+            width=18,
         )
+        self.anschaffungsdatum_entry.grid(row=4, column=1, sticky=W)
+        if not self.anschaffungsdatum_var.get():
+            self.anschaffungsdatum_entry.entry.delete(0, tk.END)
 
         ttkb.Label(container, text="Bemerkung").grid(row=5, column=0, sticky=W, pady=5)
         ttkb.Entry(container, textvariable=self.bemerkung_var, width=40).grid(row=5, column=1, sticky=W)
@@ -2556,7 +3022,15 @@ class MaintenanceFormDialog(ttkb.Toplevel):
         self.bemerkung_var = ttkb.StringVar(value=(data["bemerkung"] if data else ""))
 
         ttkb.Label(container, text="Geplanter Termin (TT.MM.JJJJ)*").grid(row=0, column=0, sticky=W, pady=5)
-        ttkb.Entry(container, textvariable=self.geplant_var, width=35).grid(row=0, column=1, sticky=W)
+        self.geplant_entry = DateEntry(
+            container,
+            textvariable=self.geplant_var,
+            dateformat=DATE_FORMAT,
+            width=18,
+        )
+        self.geplant_entry.grid(row=0, column=1, sticky=W)
+        if not self.geplant_var.get():
+            self.geplant_entry.entry.delete(0, tk.END)
 
         ttkb.Label(container, text="Typ*").grid(row=1, column=0, sticky=W, pady=5)
         ttkb.Entry(container, textvariable=self.typ_var, width=35).grid(row=1, column=1, sticky=W)
@@ -2565,7 +3039,15 @@ class MaintenanceFormDialog(ttkb.Toplevel):
         ttkb.Entry(container, textvariable=self.beschreibung_var, width=35).grid(row=2, column=1, sticky=W)
 
         ttkb.Label(container, text="Durchgeführt am (TT.MM.JJJJ)").grid(row=3, column=0, sticky=W, pady=5)
-        ttkb.Entry(container, textvariable=self.durchgefuehrt_var, width=35).grid(row=3, column=1, sticky=W)
+        self.durchgefuehrt_entry = DateEntry(
+            container,
+            textvariable=self.durchgefuehrt_var,
+            dateformat=DATE_FORMAT,
+            width=18,
+        )
+        self.durchgefuehrt_entry.grid(row=3, column=1, sticky=W)
+        if not self.durchgefuehrt_var.get():
+            self.durchgefuehrt_entry.entry.delete(0, tk.END)
 
         ttkb.Label(container, text="Durchgeführt von").grid(row=4, column=0, sticky=W, pady=5)
         ttkb.Entry(container, textvariable=self.von_var, width=35).grid(row=4, column=1, sticky=W)
@@ -2791,7 +3273,13 @@ class RepairFormDialog(ttkb.Toplevel):
         self.beschreibung_text = tk.Text(container, height=4, width=40, wrap="word")
 
         ttkb.Label(container, text="Datum (TT.MM.JJJJ)").grid(row=0, column=0, sticky=W, pady=5)
-        ttkb.Entry(container, textvariable=self.datum_var, width=35).grid(row=0, column=1, sticky=W)
+        self.datum_entry = DateEntry(
+            container,
+            textvariable=self.datum_var,
+            dateformat=DATE_FORMAT,
+            width=18,
+        )
+        self.datum_entry.grid(row=0, column=1, sticky=W)
 
         ttkb.Label(container, text="Kosten").grid(row=1, column=0, sticky=W, pady=5)
         ttkb.Entry(container, textvariable=self.kosten_var, width=35).grid(row=1, column=1, sticky=W)
@@ -2971,7 +3459,8 @@ class VehicleEditor(ttkb.Toplevel):
         self.inbetriebnahme_var = ttkb.StringVar()
         self.standort_var = ttkb.StringVar()
         self.kilometer_var = ttkb.StringVar()
-        self.status_var = ttkb.StringVar(value="im_dienst")
+        default_vehicle_status = STATUS_VALUE_TO_LABEL.get("im_dienst", STATUS_OPTIONS[0][0])
+        self.status_var = ttkb.StringVar(value=default_vehicle_status)
         self.decommission_var = ttkb.BooleanVar(value=False)
         self.decommission_date_var = ttkb.StringVar()
 
@@ -3010,7 +3499,15 @@ class VehicleEditor(ttkb.Toplevel):
         self.category_box.grid(row=4, column=1, sticky=W)
 
         ttkb.Label(form, text="Inbetriebnahme (TT.MM.JJJJ)").grid(row=5, column=0, sticky=W, pady=5)
-        ttkb.Entry(form, textvariable=self.inbetriebnahme_var, width=40).grid(row=5, column=1, sticky=W)
+        self.inbetriebnahme_entry = DateEntry(
+            form,
+            textvariable=self.inbetriebnahme_var,
+            dateformat=DATE_FORMAT,
+            width=18,
+        )
+        self.inbetriebnahme_entry.grid(row=5, column=1, sticky=W)
+        if not self.inbetriebnahme_var.get():
+            self.inbetriebnahme_entry.entry.delete(0, tk.END)
 
         ttkb.Label(form, text="Standort").grid(row=6, column=0, sticky=W, pady=5)
         self.standort_box = ttkb.Combobox(
@@ -3029,7 +3526,7 @@ class VehicleEditor(ttkb.Toplevel):
         ttkb.Combobox(
             form,
             textvariable=self.status_var,
-            values=["im_dienst", "in_reparatur", "ausgeschieden"],
+            values=[label for label, _ in STATUS_OPTIONS],
             state="readonly",
             width=20,
         ).grid(row=8, column=1, sticky=W)
@@ -3044,10 +3541,15 @@ class VehicleEditor(ttkb.Toplevel):
             bootstyle="round-toggle",
         ).grid(row=0, column=0, sticky=W, pady=5)
         ttkb.Label(decommission_frame, text="Datum (TT.MM.JJJJ)").grid(row=0, column=1, sticky=W, pady=5)
-        self.decommission_entry = ttkb.Entry(
-            decommission_frame, textvariable=self.decommission_date_var, width=20
+        self.decommission_entry = DateEntry(
+            decommission_frame,
+            textvariable=self.decommission_date_var,
+            dateformat=DATE_FORMAT,
+            width=18,
         )
         self.decommission_entry.grid(row=0, column=2, sticky=W)
+        if not self.decommission_date_var.get():
+            self.decommission_entry.entry.delete(0, tk.END)
 
         button_frame = ttkb.Frame(container)
         button_frame.pack(fill=tk.X, pady=(15, 0))
@@ -3067,8 +3569,9 @@ class VehicleEditor(ttkb.Toplevel):
         self.grab_set()
 
     def _format_location(self, row: sqlite3.Row) -> str:
-        parts = [row["bezirksstelle"], row["ortsstelle"]]
-        label = " - ".join(filter(None, parts)) or f"Standort #{row['id']}"
+        label = self.db.location_label(row["id"])
+        if not label:
+            label = f"Standort #{row['id']}"
         return f"{label} (#{row['id']})"
 
     def _update_model_choices(self) -> None:
@@ -3085,7 +3588,11 @@ class VehicleEditor(ttkb.Toplevel):
     def _update_decommission_state(self) -> None:
         state = tk.NORMAL if self.decommission_var.get() else tk.DISABLED
         self.decommission_entry.configure(state=state)
+        if hasattr(self.decommission_entry, "entry"):
+            self.decommission_entry.entry.configure(state=state)
         if state == tk.DISABLED:
+            if hasattr(self.decommission_entry, "entry"):
+                self.decommission_entry.entry.delete(0, tk.END)
             self.decommission_date_var.set("")
 
     def load_data(self) -> None:
@@ -3110,15 +3617,20 @@ class VehicleEditor(ttkb.Toplevel):
         else:
             self.category_var.set(vehicle["kategorie"] or "")
         self.inbetriebnahme_var.set(format_date(vehicle["inbetriebnahme"]))
+        if not self.inbetriebnahme_var.get():
+            self.inbetriebnahme_entry.entry.delete(0, tk.END)
         if vehicle["standort_id"]:
             for row in self.locations:
                 if row["id"] == vehicle["standort_id"]:
                     self.standort_var.set(self._format_location(row))
                     break
         self.kilometer_var.set(str(vehicle["kilometerstand"] or 0))
-        self.status_var.set(vehicle["status"] or "im_dienst")
+        status_value = vehicle["status"] or "im_dienst"
+        self.status_var.set(display_status(status_value))
         self.decommission_var.set(bool(vehicle["ausserbetrieb"]))
         self.decommission_date_var.set(format_date(vehicle["ausserbetriebnahme_datum"]))
+        if not self.decommission_date_var.get():
+            self.decommission_entry.entry.delete(0, tk.END)
         self._update_decommission_state()
 
     def save(self) -> None:
@@ -3170,6 +3682,7 @@ class VehicleEditor(ttkb.Toplevel):
                 category_id = row["id"]
                 break
 
+        status_value = STATUS_LABEL_TO_VALUE.get(self.status_var.get(), "im_dienst")
         self.db.add_or_update_vehicle(
             fahrzeug_id=self.fahrzeug_id,
             name=self.name_var.get(),
@@ -3180,7 +3693,7 @@ class VehicleEditor(ttkb.Toplevel):
             inbetriebnahme=inbetriebnahme,
             standort_id=standort_id,
             kilometerstand=kilometer,
-            status=self.status_var.get() or "im_dienst",
+            status=status_value,
             marke_id=brand_id,
             fahrzeugtyp_id=model_id,
             fahrzeugkategorie_id=category_id,
@@ -3254,8 +3767,15 @@ class MaterialEditor(ttkb.Toplevel):
         self.expiry_active = ttkb.BooleanVar(value=True)
         self.expiry_var = ttkb.StringVar()
         ttkb.Label(form, text="Verfallsdatum (TT.MM.JJJJ)").grid(row=5, column=0, sticky=W, pady=5)
-        self.expiry_entry = ttkb.Entry(form, textvariable=self.expiry_var, width=20)
+        self.expiry_entry = DateEntry(
+            form,
+            textvariable=self.expiry_var,
+            dateformat=DATE_FORMAT,
+            width=18,
+        )
         self.expiry_entry.grid(row=5, column=1, sticky=W)
+        if not self.expiry_var.get():
+            self.expiry_entry.entry.delete(0, tk.END)
         ttkb.Checkbutton(
             form,
             text="Verfallsdatum aktiv",
@@ -3284,8 +3804,7 @@ class MaterialEditor(ttkb.Toplevel):
                 label += f" [{row['kennzeichen']}]"
             options.append(label)
         for row in self.locations:
-            parts = [row["bezirksstelle"], row["ortsstelle"]]
-            label = " - ".join(filter(None, parts))
+            label = self.db.location_label(row["id"])
             if label:
                 options.append(label)
         return sorted(set(filter(None, options)))
@@ -3295,6 +3814,10 @@ class MaterialEditor(ttkb.Toplevel):
         if not self.expiry_active.get():
             self.expiry_var.set("")
         self.expiry_entry.configure(state=state)
+        if hasattr(self.expiry_entry, "entry"):
+            self.expiry_entry.entry.configure(state=state)
+            if state == tk.DISABLED:
+                self.expiry_entry.entry.delete(0, tk.END)
 
     def load_data(self) -> None:
         material = next((row for row in self.db.list_materials() if row["id"] == self.material_id), None)
@@ -3442,6 +3965,9 @@ class MedizinprodukteApp(ttkb.Window):
         self.materials_view = MaterialsView(self.notebook, self.db)
         self.notebook.add(self.materials_view, text="Material")
 
+        self.analytics_view = AnalyticsView(self.notebook, self.db)
+        self.notebook.add(self.analytics_view, text="Auswertung")
+
         self.master_view = MasterDataView(self.notebook, self.db)
         self.notebook.add(self.master_view, text="Stammdaten")
 
@@ -3459,6 +3985,7 @@ class MedizinprodukteApp(ttkb.Window):
             self.products_view,
             self.vehicles_view,
             self.materials_view,
+            self.analytics_view,
             self.master_view,
         ]:
             if hasattr(view, "refresh"):
