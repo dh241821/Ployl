@@ -6,6 +6,7 @@ import base64
 import contextlib
 import hashlib
 import io
+import json
 import shutil
 import sqlite3
 from dataclasses import dataclass, field
@@ -62,6 +63,7 @@ class User:
     full_name: str
     role: str
     email: str
+    mandant_id: int
     standorte_lesen: bool
     standorte_schreiben: bool
     produkte_lesen: bool
@@ -111,6 +113,7 @@ class DatabaseManager:
         self.connection = sqlite3.connect(self.db_path)
         self.connection.row_factory = sqlite3.Row
         self._location_cache: Dict[int, sqlite3.Row] = {}
+        self._active_mandant_id: int = 1
         self.initialize_schema()
         self.ensure_default_admin()
 
@@ -446,6 +449,118 @@ class DatabaseManager:
                     UNIQUE(benutzer_id, schluessel),
                     FOREIGN KEY(benutzer_id) REFERENCES benutzer(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS mandanten (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    aktiv INTEGER NOT NULL DEFAULT 1,
+                    kontakt_email TEXT,
+                    notizen TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS produkt_freigaben (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    produkt_id INTEGER NOT NULL,
+                    schritt TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    kommentar TEXT,
+                    erstellt_am TEXT NOT NULL,
+                    angelegt_von INTEGER,
+                    genehmigt_von INTEGER,
+                    genehmigt_am TEXT,
+                    mandant_id INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(produkt_id) REFERENCES produkte(id) ON DELETE CASCADE,
+                    FOREIGN KEY(angelegt_von) REFERENCES benutzer(id) ON DELETE SET NULL,
+                    FOREIGN KEY(genehmigt_von) REFERENCES benutzer(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS capa_massnahmen (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    produkt_id INTEGER,
+                    beschreibung TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    faellig_am TEXT,
+                    verantwortlicher_id INTEGER,
+                    erstellt_am TEXT NOT NULL,
+                    mandant_id INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(produkt_id) REFERENCES produkte(id) ON DELETE SET NULL,
+                    FOREIGN KEY(verantwortlicher_id) REFERENCES benutzer(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS regelwerke (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    beschreibung TEXT,
+                    intervall_monate INTEGER,
+                    mandant_id INTEGER NOT NULL DEFAULT 1
+                );
+
+                CREATE TABLE IF NOT EXISTS produkt_regelwerke (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    produkt_id INTEGER NOT NULL,
+                    regelwerk_id INTEGER NOT NULL,
+                    letzter_abgleich TEXT,
+                    naechster_abgleich TEXT,
+                    mandant_id INTEGER NOT NULL DEFAULT 1,
+                    UNIQUE(produkt_id, regelwerk_id),
+                    FOREIGN KEY(produkt_id) REFERENCES produkte(id) ON DELETE CASCADE,
+                    FOREIGN KEY(regelwerk_id) REFERENCES regelwerke(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS verfahren (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    titel TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    beschreibung TEXT,
+                    dokument TEXT,
+                    mandant_id INTEGER NOT NULL DEFAULT 1
+                );
+
+                CREATE TABLE IF NOT EXISTS schulungsnachweise (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    benutzer_id INTEGER NOT NULL,
+                    verfahren_id INTEGER NOT NULL,
+                    bestaetigt_am TEXT NOT NULL,
+                    mandant_id INTEGER NOT NULL DEFAULT 1,
+                    UNIQUE(benutzer_id, verfahren_id),
+                    FOREIGN KEY(benutzer_id) REFERENCES benutzer(id) ON DELETE CASCADE,
+                    FOREIGN KEY(verfahren_id) REFERENCES verfahren(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS dashboard_layouts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    benutzer_id INTEGER NOT NULL,
+                    layout TEXT NOT NULL,
+                    erstellt_am TEXT NOT NULL,
+                    mandant_id INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(benutzer_id) REFERENCES benutzer(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS gespeicherte_filter (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    benutzer_id INTEGER NOT NULL,
+                    bereich TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    daten TEXT NOT NULL,
+                    erstellt_am TEXT NOT NULL,
+                    mandant_id INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(benutzer_id) REFERENCES benutzer(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS hilfe_artikel (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bereich TEXT NOT NULL,
+                    titel TEXT NOT NULL,
+                    inhalt TEXT NOT NULL,
+                    mandant_id INTEGER NOT NULL DEFAULT 1
+                );
+
+                CREATE TABLE IF NOT EXISTS cockpit_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    erstellt_am TEXT NOT NULL,
+                    daten TEXT NOT NULL,
+                    mandant_id INTEGER NOT NULL DEFAULT 1
+                );
                 """
             )
 
@@ -494,6 +609,37 @@ class DatabaseManager:
         self._ensure_column("kontakte", "unternehmen", "TEXT")
         self._ensure_column("kontakte", "website", "TEXT")
         self._ensure_column("kontakte", "info", "TEXT")
+
+        # multi-tenant defaults
+        self._ensure_column("benutzer", "mandant_id", "INTEGER NOT NULL DEFAULT 1")
+        for table in (
+            "standorte",
+            "fahrzeuge",
+            "produkte",
+            "produkt_komponenten",
+            "reparaturen",
+            "wartungen",
+            "verbrauchsmaterial",
+            "kontakte",
+            "bestellungen",
+            "bestellpositionen",
+            "system_log",
+            "system_audit",
+            "produkt_log",
+            "fahrzeug_log",
+            "ics_importe",
+            "capa_massnahmen",
+            "produkt_freigaben",
+            "verfahren",
+            "schulungsnachweise",
+            "dashboard_layouts",
+            "gespeicherte_filter",
+            "regelwerke",
+            "produkt_regelwerke",
+            "hilfe_artikel",
+            "cockpit_snapshots",
+        ):
+            self._ensure_column(table, "mandant_id", "INTEGER NOT NULL DEFAULT 1")
 
     def _backfill_product_manufacturers(self) -> None:
         with self.connection:
@@ -568,6 +714,57 @@ class DatabaseManager:
                     self.connection.execute(
                         "INSERT INTO wartungstypen (name) VALUES (?)",
                         (name,),
+                    )
+
+            if not list(self.connection.execute("SELECT id FROM regelwerke")):
+                defaults = [
+                    ("MDR Basisprüfung", "Grundlegende medizinprodukterelevante Prüfung", 12),
+                    ("ISO 13485 Audit", "Qualitätsmanagement-Audit", 36),
+                ]
+                for name, beschreibung, intervall in defaults:
+                    self.connection.execute(
+                        "INSERT INTO regelwerke (name, beschreibung, intervall_monate) VALUES (?, ?, ?)",
+                        (name, beschreibung, intervall),
+                    )
+
+            if not list(self.connection.execute("SELECT id FROM verfahren")):
+                verfahren_defaults = [
+                    (
+                        "Geräteeinweisung",
+                        "1.0",
+                        "Standardarbeitsanweisung für die Einweisung neuer Geräte.",
+                        "Einweisungsschritte dokumentieren",
+                    ),
+                    (
+                        "Reparaturworkflow",
+                        "1.0",
+                        "Ablauf zur Meldung und Dokumentation von Reparaturen.",
+                        "Defekte melden, Reparatur protokollieren, Freigabe einholen",
+                    ),
+                ]
+                for titel, version, beschreibung, dokument in verfahren_defaults:
+                    self.connection.execute(
+                        "INSERT INTO verfahren (titel, version, beschreibung, dokument) VALUES (?, ?, ?, ?)",
+                        (titel, version, beschreibung, dokument),
+                    )
+
+            if not list(self.connection.execute("SELECT id FROM hilfe_artikel")):
+                hilfe_defaults = [
+                    (
+                        "produkte",
+                        "Neues Produkt anlegen",
+                        "Öffnen Sie das Produktmodul, wählen Sie 'Neu' und folgen Sie dem Assistenten. Speichern nicht vergessen!",
+                    ),
+                    (
+                        "reparaturen",
+                        "Reparatur melden",
+                        "Markieren Sie das Gerät, öffnen Sie den Reparaturdialog und dokumentieren Sie Kosten sowie Dateien.",
+                    ),
+                ]
+                for bereich, titel, inhalt in hilfe_defaults:
+                    self.connection.execute(
+                        "INSERT INTO hilfe_artikel (bereich, titel, inhalt) VALUES (?, ?, ?)",
+                        (bereich, titel, inhalt),
                     )
 
             if not list(self.connection.execute("SELECT id FROM standorte")):
@@ -690,6 +887,18 @@ class DatabaseManager:
                     *permission_values,
                 ),
             )
+            self.connection.execute(
+                "INSERT OR IGNORE INTO mandanten (id, name, aktiv) VALUES (1, 'Standardmandant', 1)"
+            )
+
+    # ------------------------------------------------------------------
+    # tenant helpers
+    # ------------------------------------------------------------------
+    def set_active_mandant(self, mandant_id: Optional[int]) -> None:
+        self._active_mandant_id = int(mandant_id or 1)
+
+    def active_mandant_id(self) -> int:
+        return self._active_mandant_id
 
     # ------------------------------------------------------------------
     # helpers
@@ -718,7 +927,7 @@ class DatabaseManager:
         if identifier:
             row = self.connection.execute(
                 f"""
-                SELECT id, username, full_name, role, email, password_hash, {columns_sql}
+                SELECT id, username, full_name, role, email, mandant_id, password_hash, {columns_sql}
                 FROM benutzer
                 WHERE dienstnummer = ? COLLATE NOCASE
                 """,
@@ -726,7 +935,11 @@ class DatabaseManager:
             ).fetchone()
         if not row:
             row = self.connection.execute(
-                f"SELECT id, username, full_name, role, email, password_hash, {columns_sql} FROM benutzer WHERE username = ?",
+                f"""
+                SELECT id, username, full_name, role, email, mandant_id, password_hash, {columns_sql}
+                FROM benutzer
+                WHERE username = ?
+                """,
                 (username,),
             ).fetchone()
         if not row:
@@ -736,20 +949,21 @@ class DatabaseManager:
         permission_kwargs = {column: bool(row[column]) for column in PERMISSION_COLUMNS}
         location_entries = self.list_user_location_permissions(row["id"])
         location_permissions = {
-            entry["standort_id"]: LocationPermission(
-                standort_id=entry["standort_id"],
-                lesen=entry["lesen"],
-                schreiben=entry["schreiben"],
-                label=entry["label"],
+            int(entry["standort_id"]): LocationPermission(
+                standort_id=int(entry["standort_id"]),
+                lesen=bool(entry["lesen"]),
+                schreiben=bool(entry["schreiben"]),
+                label=str(entry["label"]),
             )
             for entry in location_entries
         }
         return User(
-            id=row["id"],
+            id=int(row["id"]),
             username=row["username"],
             full_name=row["full_name"],
             role=row["role"],
             email=row["email"] or "",
+            mandant_id=int(row["mandant_id"] or 1),
             **permission_kwargs,
             location_permissions=location_permissions,
         )
@@ -1052,7 +1266,12 @@ class DatabaseManager:
             )
 
     def list_locations(self) -> List[sqlite3.Row]:
-        return list(self.connection.execute("SELECT * FROM standorte ORDER BY land, bereich, bezirk"))
+        return list(
+            self.connection.execute(
+                "SELECT * FROM standorte WHERE mandant_id = ? ORDER BY land, bereich, bezirk",
+                (self._active_mandant_id,),
+            )
+        )
 
     def add_location(
         self,
@@ -1066,18 +1285,28 @@ class DatabaseManager:
         with self.connection:
             cur = self.connection.execute(
                 """
-                INSERT INTO standorte (land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO standorte (
+                    land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung, mandant_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung),
+                (
+                    land,
+                    bereich,
+                    bezirk,
+                    bezirksstelle,
+                    ortsstelle,
+                    beschreibung,
+                    self._active_mandant_id,
+                ),
             )
         self._location_cache.clear()
         return int(cur.lastrowid)
 
     def get_location(self, location_id: int) -> Optional[sqlite3.Row]:
         return self.connection.execute(
-            "SELECT * FROM standorte WHERE id = ?",
-            (location_id,),
+            "SELECT * FROM standorte WHERE id = ? AND mandant_id = ?",
+            (location_id, self._active_mandant_id),
         ).fetchone()
 
     def update_location(
@@ -1095,17 +1324,26 @@ class DatabaseManager:
                 """
                 UPDATE standorte
                 SET land = ?, bereich = ?, bezirk = ?, bezirksstelle = ?, ortsstelle = ?, beschreibung = ?
-                WHERE id = ?
+                WHERE id = ? AND mandant_id = ?
                 """,
-                (land, bereich, bezirk, bezirksstelle, ortsstelle, beschreibung, location_id),
+                (
+                    land,
+                    bereich,
+                    bezirk,
+                    bezirksstelle,
+                    ortsstelle,
+                    beschreibung,
+                    location_id,
+                    self._active_mandant_id,
+                ),
             )
         self._location_cache.clear()
 
     def delete_location(self, location_id: int) -> None:
         with self.connection:
             self.connection.execute(
-                "DELETE FROM standorte WHERE id = ?",
-                (location_id,),
+                "DELETE FROM standorte WHERE id = ? AND mandant_id = ?",
+                (location_id, self._active_mandant_id),
             )
         self._location_cache.clear()
 
@@ -1113,7 +1351,12 @@ class DatabaseManager:
     # contacts
     # ------------------------------------------------------------------
     def list_contacts(self) -> List[sqlite3.Row]:
-        return list(self.connection.execute("SELECT * FROM kontakte ORDER BY name"))
+        return list(
+            self.connection.execute(
+                "SELECT * FROM kontakte WHERE mandant_id = ? ORDER BY name",
+                (self._active_mandant_id,),
+            )
+        )
 
     def add_or_update_contact(
         self,
@@ -1135,7 +1378,7 @@ class DatabaseManager:
                     UPDATE kontakte
                     SET name = ?, adresse = ?, telefon = ?, email = ?, kontaktperson = ?,
                         unternehmen = ?, website = ?, info = ?
-                    WHERE id = ?
+                    WHERE id = ? AND mandant_id = ?
                     """,
                     (
                         name,
@@ -1147,21 +1390,37 @@ class DatabaseManager:
                         website,
                         info,
                         kontakt_id,
+                        self._active_mandant_id,
                     ),
                 )
                 return kontakt_id
             cur = self.connection.execute(
                 """
-                INSERT INTO kontakte (name, adresse, telefon, email, kontaktperson, unternehmen, website, info)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO kontakte (
+                    name, adresse, telefon, email, kontaktperson, unternehmen, website, info, mandant_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (name, adresse, telefon, email, kontaktperson, unternehmen, website, info),
+                (
+                    name,
+                    adresse,
+                    telefon,
+                    email,
+                    kontaktperson,
+                    unternehmen,
+                    website,
+                    info,
+                    self._active_mandant_id,
+                ),
             )
         return int(cur.lastrowid)
 
     def delete_contact(self, kontakt_id: int) -> None:
         with self.connection:
-            self.connection.execute("DELETE FROM kontakte WHERE id = ?", (kontakt_id,))
+            self.connection.execute(
+                "DELETE FROM kontakte WHERE id = ? AND mandant_id = ?",
+                (kontakt_id, self._active_mandant_id),
+            )
 
     # ------------------------------------------------------------------
     # vehicle management
@@ -1185,8 +1444,11 @@ class DatabaseManager:
                 LEFT JOIN fahrzeug_marken AS fm ON fm.id = f.marke_id
                 LEFT JOIN fahrzeug_modelle AS fmo ON fmo.id = f.fahrzeugtyp_id
                 LEFT JOIN fahrzeug_kategorien AS fk ON fk.id = f.fahrzeugkategorie_id
+                WHERE f.mandant_id = ?
                 ORDER BY f.name
                 """
+            ,
+                (self._active_mandant_id,)
             )
         )
 
@@ -1246,7 +1508,7 @@ class DatabaseManager:
                         inbetriebnahme = ?, standort_id = ?, kilometerstand = ?, status = ?,
                         marke_id = ?, fahrzeugtyp_id = ?, fahrzeugkategorie_id = ?,
                         ausserbetrieb = ?, ausserbetriebnahme_datum = ?, fahrgestellnummer = ?
-                    WHERE id = ?
+                    WHERE id = ? AND mandant_id = ?
                     """,
                     (
                         name,
@@ -1265,6 +1527,7 @@ class DatabaseManager:
                         ausserbetrieb_str,
                         fahrgestellnummer,
                         fahrzeug_id,
+                        self._active_mandant_id,
                     ),
                 )
                 self.add_vehicle_log(
@@ -1279,9 +1542,9 @@ class DatabaseManager:
                 INSERT INTO fahrzeuge (
                     name, kennzeichen, marke, typ, kategorie, inbetriebnahme, standort_id,
                     kilometerstand, status, marke_id, fahrzeugtyp_id, fahrzeugkategorie_id,
-                    ausserbetrieb, ausserbetriebnahme_datum, fahrgestellnummer
+                    ausserbetrieb, ausserbetriebnahme_datum, fahrgestellnummer, mandant_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -1299,6 +1562,7 @@ class DatabaseManager:
                     ausserbetrieb_flag,
                     ausserbetrieb_str,
                     fahrgestellnummer,
+                    self._active_mandant_id,
                 ),
             )
             new_id = int(cur.lastrowid)
@@ -1316,10 +1580,19 @@ class DatabaseManager:
         with self.connection:
             self.connection.execute(
                 """
-                INSERT INTO fahrzeug_log (fahrzeug_id, eintragstyp, beschreibung, zeitstempel, benutzer_id)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO fahrzeug_log (
+                    fahrzeug_id, eintragstyp, beschreibung, zeitstempel, benutzer_id, mandant_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (fahrzeug_id, eintragstyp, beschreibung, datetime.now().isoformat(), benutzer_id),
+                (
+                    fahrzeug_id,
+                    eintragstyp,
+                    beschreibung,
+                    datetime.now().isoformat(),
+                    benutzer_id,
+                    self._active_mandant_id,
+                ),
             )
 
     def vehicle_history(self, fahrzeug_id: int) -> List[sqlite3.Row]:
@@ -1329,10 +1602,10 @@ class DatabaseManager:
                 SELECT fl.*, b.full_name AS benutzer_name, b.dienstnummer
                 FROM fahrzeug_log AS fl
                 LEFT JOIN benutzer AS b ON b.id = fl.benutzer_id
-                WHERE fl.fahrzeug_id = ?
+                WHERE fl.fahrzeug_id = ? AND fl.mandant_id = ?
                 ORDER BY fl.zeitstempel DESC
                 """,
-                (fahrzeug_id,),
+                (fahrzeug_id, self._active_mandant_id),
             )
         )
 
@@ -1348,10 +1621,10 @@ class DatabaseManager:
                 LEFT JOIN kategorien AS k ON k.id = p.kategorie_id
                 LEFT JOIN produkt_typen AS pt ON pt.id = p.produkt_typ_id
                 LEFT JOIN produkt_modelle AS pm ON pm.id = p.produkt_modell_id
-                WHERE p.fahrzeug_id = ?
+                WHERE p.fahrzeug_id = ? AND p.mandant_id = ?
                 ORDER BY p.name
                 """,
-                (fahrzeug_id,),
+                (fahrzeug_id, self._active_mandant_id),
             )
         )
 
@@ -1364,14 +1637,28 @@ class DatabaseManager:
     ) -> int:
         with self.connection:
             rows = self.connection.execute(
-                "SELECT id FROM produkte WHERE fahrzeug_id = ?",
-                (source_vehicle_id,),
+                "SELECT id FROM produkte WHERE fahrzeug_id = ? AND mandant_id = ?",
+                (source_vehicle_id, self._active_mandant_id),
             ).fetchall()
             product_ids = [int(row["id"]) for row in rows]
-            self.connection.execute(
-                "UPDATE produkte SET fahrzeug_id = ? WHERE fahrzeug_id = ?",
-                (target_vehicle_id, source_vehicle_id),
-            )
+            if target_vehicle_id is None:
+                self.connection.execute(
+                    """
+                    UPDATE produkte
+                    SET fahrzeug_id = NULL
+                    WHERE fahrzeug_id = ? AND mandant_id = ?
+                    """,
+                    (source_vehicle_id, self._active_mandant_id),
+                )
+            else:
+                self.connection.execute(
+                    """
+                    UPDATE produkte
+                    SET fahrzeug_id = ?
+                    WHERE fahrzeug_id = ? AND mandant_id = ?
+                    """,
+                    (target_vehicle_id, source_vehicle_id, self._active_mandant_id),
+                )
         for produkt_id in product_ids:
             ziel_text = "kein Fahrzeug" if not target_vehicle_id else f"Fahrzeug {target_vehicle_id}"
             self.add_product_log(
@@ -1408,8 +1695,11 @@ class DatabaseManager:
                 LEFT JOIN produkt_typen AS pt ON pt.id = p.produkt_typ_id
                 LEFT JOIN produkt_modelle AS pm ON pm.id = p.produkt_modell_id
                 LEFT JOIN produkt_hersteller AS ph ON ph.id = p.produkt_hersteller_id
+                WHERE p.mandant_id = ?
                 ORDER BY p.name
                 """
+            ,
+                (self._active_mandant_id,)
             )
         )
 
@@ -1435,9 +1725,9 @@ class DatabaseManager:
             LEFT JOIN produkt_typen AS pt ON pt.id = p.produkt_typ_id
             LEFT JOIN produkt_modelle AS pm ON pm.id = p.produkt_modell_id
             LEFT JOIN produkt_hersteller AS ph ON ph.id = p.produkt_hersteller_id
-            WHERE p.id = ?
+            WHERE p.id = ? AND p.mandant_id = ?
             """,
-            (produkt_id,),
+            (produkt_id, self._active_mandant_id),
         ).fetchone()
 
     def serial_exists(self, seriennummer: str, *, exclude_id: Optional[int] = None) -> bool:
@@ -2087,8 +2377,10 @@ class DatabaseManager:
                 SELECT m.*, k.name AS kategorie_name
                 FROM verbrauchsmaterial AS m
                 LEFT JOIN kategorien AS k ON k.id = m.kategorie_id
+                WHERE m.mandant_id = ?
                 ORDER BY m.name
-                """
+                """,
+                (self._active_mandant_id,),
             )
         )
 
@@ -2111,26 +2403,47 @@ class DatabaseManager:
                     """
                     UPDATE verbrauchsmaterial
                     SET name = ?, kategorie_id = ?, lagerort = ?, soll_bestand = ?, ist_bestand = ?, verfallsdatum = ?
-                    WHERE id = ?
+                    WHERE id = ? AND mandant_id = ?
                     """,
-                    (name, kategorie_id, lagerort, soll_bestand, ist_bestand, verfallsdatum_str, material_id),
+                    (
+                        name,
+                        kategorie_id,
+                        lagerort,
+                        soll_bestand,
+                        ist_bestand,
+                        verfallsdatum_str,
+                        material_id,
+                        self._active_mandant_id,
+                    ),
                 )
                 return material_id
             cur = self.connection.execute(
                 """
-                INSERT INTO verbrauchsmaterial (name, kategorie_id, lagerort, soll_bestand, ist_bestand, verfallsdatum)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO verbrauchsmaterial (
+                    name, kategorie_id, lagerort, soll_bestand, ist_bestand, verfallsdatum, mandant_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (name, kategorie_id, lagerort, soll_bestand, ist_bestand, verfallsdatum_str),
+                (
+                    name,
+                    kategorie_id,
+                    lagerort,
+                    soll_bestand,
+                    ist_bestand,
+                    verfallsdatum_str,
+                    self._active_mandant_id,
+                ),
             )
             return int(cur.lastrowid)
 
     def material_statistics(self) -> Dict[str, Any]:
         total_items = self.connection.execute(
-            "SELECT COUNT(*) FROM verbrauchsmaterial"
+            "SELECT COUNT(*) FROM verbrauchsmaterial WHERE mandant_id = ?",
+            (self._active_mandant_id,),
         ).fetchone()[0]
         total_bestand = self.connection.execute(
-            "SELECT COALESCE(SUM(ist_bestand), 0) FROM verbrauchsmaterial"
+            "SELECT COALESCE(SUM(ist_bestand), 0) FROM verbrauchsmaterial WHERE mandant_id = ?",
+            (self._active_mandant_id,),
         ).fetchone()[0]
         categories = [
             (
@@ -2145,13 +2458,16 @@ class DatabaseManager:
                        COALESCE(SUM(m.ist_bestand), 0) AS bestand
                 FROM verbrauchsmaterial AS m
                 LEFT JOIN kategorien AS k ON k.id = m.kategorie_id
+                WHERE m.mandant_id = ?
                 GROUP BY name
                 ORDER BY name
-                """
+                """,
+                (self._active_mandant_id,),
             )
         ]
         expiring = self.connection.execute(
-            "SELECT COUNT(*) FROM verbrauchsmaterial WHERE verfallsdatum IS NOT NULL"
+            "SELECT COUNT(*) FROM verbrauchsmaterial WHERE verfallsdatum IS NOT NULL AND mandant_id = ?",
+            (self._active_mandant_id,),
         ).fetchone()[0]
         return {
             "total_items": int(total_items or 0),
@@ -2831,10 +3147,16 @@ class DatabaseManager:
         with self.connection:
             self.connection.execute(
                 """
-                INSERT INTO system_log (zeitstempel, ebene, nachricht, benutzer_id)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO system_log (zeitstempel, ebene, nachricht, benutzer_id, mandant_id)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (datetime.utcnow().isoformat(timespec="seconds"), ebene, nachricht, benutzer_id),
+                (
+                    datetime.utcnow().isoformat(timespec="seconds"),
+                    ebene,
+                    nachricht,
+                    benutzer_id,
+                    self._active_mandant_id,
+                ),
             )
 
     def list_system_log(self, limit: int = 500) -> List[sqlite3.Row]:
@@ -2844,10 +3166,11 @@ class DatabaseManager:
                 SELECT sl.*, b.full_name AS benutzer_name
                 FROM system_log AS sl
                 LEFT JOIN benutzer AS b ON b.id = sl.benutzer_id
+                WHERE sl.mandant_id = ?
                 ORDER BY sl.id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (self._active_mandant_id, limit),
             )
         )
 
@@ -2864,8 +3187,10 @@ class DatabaseManager:
         with self.connection:
             self.connection.execute(
                 """
-                INSERT INTO system_audit (tabelle, datensatz_id, aktion, vorher, nachher, zeitstempel, benutzer_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO system_audit (
+                    tabelle, datensatz_id, aktion, vorher, nachher, zeitstempel, benutzer_id, mandant_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     tabelle,
@@ -2875,6 +3200,7 @@ class DatabaseManager:
                     nachher,
                     datetime.utcnow().isoformat(timespec="seconds"),
                     benutzer_id,
+                    self._active_mandant_id,
                 ),
             )
 
@@ -2888,12 +3214,15 @@ class DatabaseManager:
             "SELECT sa.*, b.full_name AS benutzer_name FROM system_audit AS sa "
             "LEFT JOIN benutzer AS b ON b.id = sa.benutzer_id"
         )
-        params: Tuple[Any, ...] = ()
+        params: List[Any] = []
+        where_clauses = ["sa.mandant_id = ?"]
+        params.append(self._active_mandant_id)
         if benutzer_id:
-            query += " WHERE sa.benutzer_id = ?"
-            params = (benutzer_id,)
+            where_clauses.append("sa.benutzer_id = ?")
+            params.append(benutzer_id)
+        query += " WHERE " + " AND ".join(where_clauses)
         query += " ORDER BY sa.id DESC LIMIT ?"
-        params = params + (limit,)
+        params.append(limit)
         return list(self.connection.execute(query, params))
 
     def import_ics_events(self, path: Path) -> int:
@@ -2988,24 +3317,29 @@ class DatabaseManager:
         with self.connection:
             cur = self.connection.execute(
                 """
-                INSERT INTO bestellungen (erstellt_am, erstellt_von, status, standort_id, bemerkung)
-                VALUES (?, ?, 'offen', ?, ?)
+                INSERT INTO bestellungen (
+                    erstellt_am, erstellt_von, status, standort_id, bemerkung, mandant_id
+                )
+                VALUES (?, ?, 'offen', ?, ?, ?)
                 """,
                 (
                     datetime.utcnow().isoformat(timespec="seconds"),
                     erstellt_von,
                     standort_id,
                     bemerkung,
+                    self._active_mandant_id,
                 ),
             )
             bestellung_id = int(cur.lastrowid)
             for beschreibung, menge in positionen:
                 self.connection.execute(
                     """
-                    INSERT INTO bestellpositionen (bestellung_id, beschreibung, menge)
-                    VALUES (?, ?, ?)
+                    INSERT INTO bestellpositionen (
+                        bestellung_id, beschreibung, menge, mandant_id
+                    )
+                    VALUES (?, ?, ?, ?)
                     """,
-                    (bestellung_id, beschreibung, menge),
+                    (bestellung_id, beschreibung, menge, self._active_mandant_id),
                 )
         return bestellung_id
 
@@ -3050,8 +3384,11 @@ class DatabaseManager:
         )
         params: Tuple[Any, ...] = ()
         if status:
-            query += " WHERE b.status = ?"
-            params = (status,)
+            query += " WHERE b.status = ? AND b.mandant_id = ?"
+            params = (status, self._active_mandant_id)
+        else:
+            query += " WHERE b.mandant_id = ?"
+            params = (self._active_mandant_id,)
         query += " ORDER BY b.erstellt_am DESC"
         return list(self.connection.execute(query, params))
 
@@ -3060,25 +3397,437 @@ class DatabaseManager:
         results: Dict[str, List[sqlite3.Row]] = {}
         queries = {
             "produkte": (
-                "SELECT id, name, seriennummer FROM produkte WHERE name LIKE ? OR seriennummer LIKE ?",
-                (like, like),
+                "SELECT id, name, seriennummer FROM produkte "
+                "WHERE (name LIKE ? OR seriennummer LIKE ?) AND mandant_id = ?",
+                (like, like, self._active_mandant_id),
             ),
             "fahrzeuge": (
-                "SELECT id, name, kennzeichen FROM fahrzeuge WHERE name LIKE ? OR kennzeichen LIKE ?",
-                (like, like),
+                "SELECT id, name, kennzeichen FROM fahrzeuge "
+                "WHERE (name LIKE ? OR kennzeichen LIKE ?) AND mandant_id = ?",
+                (like, like, self._active_mandant_id),
             ),
             "material": (
-                "SELECT id, name, lagerort FROM verbrauchsmaterial WHERE name LIKE ?",
-                (like,),
+                "SELECT id, name, lagerort FROM verbrauchsmaterial WHERE name LIKE ? AND mandant_id = ?",
+                (like, self._active_mandant_id),
             ),
             "kontakte": (
-                "SELECT id, name, email FROM kontakte WHERE name LIKE ? OR email LIKE ?",
-                (like, like),
+                "SELECT id, name, email FROM kontakte "
+                "WHERE (name LIKE ? OR email LIKE ?) AND mandant_id = ?",
+                (like, like, self._active_mandant_id),
             ),
         }
         for key, (query, params) in queries.items():
             results[key] = list(self.connection.execute(query, params))
         return results
+
+    # ------------------------------------------------------------------
+    # tenant & governance extensions
+    # ------------------------------------------------------------------
+    def list_mandanten(self) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                "SELECT * FROM mandanten ORDER BY name"
+            )
+        )
+
+    def save_mandant(
+        self,
+        *,
+        mandant_id: Optional[int],
+        name: str,
+        aktiv: bool,
+        kontakt_email: str,
+        notizen: str,
+    ) -> int:
+        with self.connection:
+            if mandant_id:
+                self.connection.execute(
+                    """
+                    UPDATE mandanten
+                    SET name = ?, aktiv = ?, kontakt_email = ?, notizen = ?
+                    WHERE id = ?
+                    """,
+                    (name, 1 if aktiv else 0, kontakt_email, notizen, mandant_id),
+                )
+                return mandant_id
+            cur = self.connection.execute(
+                """
+                INSERT INTO mandanten (name, aktiv, kontakt_email, notizen)
+                VALUES (?, ?, ?, ?)
+                """,
+                (name, 1 if aktiv else 0, kontakt_email, notizen),
+            )
+            return int(cur.lastrowid)
+
+    def create_product_approval(
+        self,
+        *,
+        produkt_id: int,
+        schritt: str,
+        kommentar: str,
+        benutzer_id: Optional[int],
+    ) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                """
+                INSERT INTO produkt_freigaben (
+                    produkt_id, schritt, status, kommentar, erstellt_am, angelegt_von, mandant_id
+                )
+                VALUES (?, ?, 'offen', ?, ?, ?, ?)
+                """,
+                (
+                    produkt_id,
+                    schritt,
+                    kommentar,
+                    datetime.utcnow().isoformat(timespec="seconds"),
+                    benutzer_id,
+                    self._active_mandant_id,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_product_approvals(self, status: Optional[str] = None) -> List[sqlite3.Row]:
+        query = (
+            "SELECT pf.*, p.name AS produkt_name, p.seriennummer, u.full_name AS anleger, "
+            "gv.full_name AS genehmiger "
+            "FROM produkt_freigaben AS pf "
+            "LEFT JOIN produkte AS p ON p.id = pf.produkt_id "
+            "LEFT JOIN benutzer AS u ON u.id = pf.angelegt_von "
+            "LEFT JOIN benutzer AS gv ON gv.id = pf.genehmigt_von "
+            "WHERE pf.mandant_id = ?"
+        )
+        params: List[Any] = [self._active_mandant_id]
+        if status:
+            query += " AND pf.status = ?"
+            params.append(status)
+        query += " ORDER BY pf.erstellt_am DESC"
+        return list(self.connection.execute(query, params))
+
+    def update_product_approval_status(
+        self,
+        approval_id: int,
+        *,
+        status: str,
+        benutzer_id: Optional[int],
+        kommentar: str = "",
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE produkt_freigaben
+                SET status = ?, genehmigt_von = ?, genehmigt_am = ?, kommentar = COALESCE(?, kommentar)
+                WHERE id = ? AND mandant_id = ?
+                """,
+                (
+                    status,
+                    benutzer_id,
+                    datetime.utcnow().isoformat(timespec="seconds"),
+                    kommentar,
+                    approval_id,
+                    self._active_mandant_id,
+                ),
+            )
+
+    def create_capa_action(
+        self,
+        *,
+        produkt_id: Optional[int],
+        beschreibung: str,
+        faellig_am: Optional[date],
+        verantwortlicher_id: Optional[int],
+    ) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                """
+                INSERT INTO capa_massnahmen (
+                    produkt_id, beschreibung, status, faellig_am, verantwortlicher_id, erstellt_am, mandant_id
+                )
+                VALUES (?, ?, 'offen', ?, ?, ?, ?)
+                """,
+                (
+                    produkt_id,
+                    beschreibung,
+                    self._format_date(faellig_am),
+                    verantwortlicher_id,
+                    datetime.utcnow().isoformat(timespec="seconds"),
+                    self._active_mandant_id,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_capa_actions(self, status: Optional[str] = None) -> List[sqlite3.Row]:
+        query = (
+            "SELECT cm.*, p.name AS produkt_name, p.seriennummer, b.full_name AS verantwortlicher "
+            "FROM capa_massnahmen AS cm "
+            "LEFT JOIN produkte AS p ON p.id = cm.produkt_id "
+            "LEFT JOIN benutzer AS b ON b.id = cm.verantwortlicher_id "
+            "WHERE cm.mandant_id = ?"
+        )
+        params: List[Any] = [self._active_mandant_id]
+        if status:
+            query += " AND cm.status = ?"
+            params.append(status)
+        query += " ORDER BY cm.faellig_am IS NULL, cm.faellig_am"
+        return list(self.connection.execute(query, params))
+
+    def update_capa_status(
+        self,
+        massnahme_id: int,
+        *,
+        status: str,
+        benutzer_id: Optional[int] = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE capa_massnahmen
+                SET status = ?, verantwortlicher_id = COALESCE(?, verantwortlicher_id)
+                WHERE id = ? AND mandant_id = ?
+                """,
+                (status, benutzer_id, massnahme_id, self._active_mandant_id),
+            )
+
+    def list_regelwerke(self) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                "SELECT * FROM regelwerke WHERE mandant_id = ? ORDER BY name",
+                (self._active_mandant_id,),
+            )
+        )
+
+    def save_regelwerk(
+        self,
+        *,
+        regelwerk_id: Optional[int],
+        name: str,
+        beschreibung: str,
+        intervall_monate: Optional[int],
+    ) -> int:
+        with self.connection:
+            if regelwerk_id:
+                self.connection.execute(
+                    """
+                    UPDATE regelwerke
+                    SET name = ?, beschreibung = ?, intervall_monate = ?
+                    WHERE id = ? AND mandant_id = ?
+                    """,
+                    (name, beschreibung, intervall_monate, regelwerk_id, self._active_mandant_id),
+                )
+                return regelwerk_id
+            cur = self.connection.execute(
+                """
+                INSERT INTO regelwerke (name, beschreibung, intervall_monate, mandant_id)
+                VALUES (?, ?, ?, ?)
+                """,
+                (name, beschreibung, intervall_monate, self._active_mandant_id),
+            )
+            return int(cur.lastrowid)
+
+    def assign_regelwerk_to_product(
+        self,
+        *,
+        produkt_id: int,
+        regelwerk_id: int,
+        letzter_abgleich: Optional[date],
+        naechster_abgleich: Optional[date],
+    ) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                """
+                INSERT INTO produkt_regelwerke (
+                    produkt_id, regelwerk_id, letzter_abgleich, naechster_abgleich, mandant_id
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(produkt_id, regelwerk_id) DO UPDATE SET
+                    letzter_abgleich = excluded.letzter_abgleich,
+                    naechster_abgleich = excluded.naechster_abgleich
+                """,
+                (
+                    produkt_id,
+                    regelwerk_id,
+                    self._format_date(letzter_abgleich),
+                    self._format_date(naechster_abgleich),
+                    self._active_mandant_id,
+                ),
+            )
+            return int(cur.lastrowid or 0)
+
+    def list_regelwerk_assignments(self, produkt_id: int) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                """
+                SELECT pr.*, r.name AS regelwerk_name, r.intervall_monate
+                FROM produkt_regelwerke AS pr
+                LEFT JOIN regelwerke AS r ON r.id = pr.regelwerk_id
+                WHERE pr.produkt_id = ? AND pr.mandant_id = ?
+                ORDER BY r.name
+                """,
+                (produkt_id, self._active_mandant_id),
+            )
+        )
+
+    def list_verfahren(self) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                "SELECT * FROM verfahren WHERE mandant_id = ? ORDER BY titel",
+                (self._active_mandant_id,),
+            )
+        )
+
+    def save_verfahren(
+        self,
+        *,
+        verfahren_id: Optional[int],
+        titel: str,
+        version: str,
+        beschreibung: str,
+        dokument: str,
+    ) -> int:
+        with self.connection:
+            if verfahren_id:
+                self.connection.execute(
+                    """
+                    UPDATE verfahren
+                    SET titel = ?, version = ?, beschreibung = ?, dokument = ?
+                    WHERE id = ? AND mandant_id = ?
+                    """,
+                    (titel, version, beschreibung, dokument, verfahren_id, self._active_mandant_id),
+                )
+                return verfahren_id
+            cur = self.connection.execute(
+                """
+                INSERT INTO verfahren (titel, version, beschreibung, dokument, mandant_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (titel, version, beschreibung, dokument, self._active_mandant_id),
+            )
+            return int(cur.lastrowid)
+
+    def confirm_training(
+        self,
+        *,
+        benutzer_id: int,
+        verfahren_id: int,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO schulungsnachweise (benutzer_id, verfahren_id, bestaetigt_am, mandant_id)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(benutzer_id, verfahren_id) DO UPDATE SET
+                    bestaetigt_am = excluded.bestaetigt_am
+                """,
+                (
+                    benutzer_id,
+                    verfahren_id,
+                    datetime.utcnow().isoformat(timespec="seconds"),
+                    self._active_mandant_id,
+                ),
+            )
+
+    def list_user_trainings(self, benutzer_id: int) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                """
+                SELECT sn.*, v.titel, v.version
+                FROM schulungsnachweise AS sn
+                LEFT JOIN verfahren AS v ON v.id = sn.verfahren_id
+                WHERE sn.benutzer_id = ? AND sn.mandant_id = ?
+                ORDER BY sn.bestaetigt_am DESC
+                """,
+                (benutzer_id, self._active_mandant_id),
+            )
+        )
+
+    def save_dashboard_layout(self, benutzer_id: int, layout: Dict[str, Any]) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO dashboard_layouts (benutzer_id, layout, erstellt_am, mandant_id)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(benutzer_id) DO UPDATE SET
+                    layout = excluded.layout,
+                    erstellt_am = excluded.erstellt_am
+                """,
+                (
+                    benutzer_id,
+                    json.dumps(layout),
+                    datetime.utcnow().isoformat(timespec="seconds"),
+                    self._active_mandant_id,
+                ),
+            )
+
+    def load_dashboard_layout(self, benutzer_id: int) -> Optional[Dict[str, Any]]:
+        row = self.connection.execute(
+            "SELECT layout FROM dashboard_layouts WHERE benutzer_id = ? AND mandant_id = ?",
+            (benutzer_id, self._active_mandant_id),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            return json.loads(row["layout"])
+        except json.JSONDecodeError:
+            return None
+
+    def save_filter_set(
+        self,
+        *,
+        benutzer_id: int,
+        bereich: str,
+        name: str,
+        daten: Dict[str, Any],
+    ) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                """
+                INSERT INTO gespeicherte_filter (benutzer_id, bereich, name, daten, erstellt_am, mandant_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    benutzer_id,
+                    bereich,
+                    name,
+                    json.dumps(daten),
+                    datetime.utcnow().isoformat(timespec="seconds"),
+                    self._active_mandant_id,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_filter_sets(self, benutzer_id: int, bereich: str) -> List[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                """
+                SELECT * FROM gespeicherte_filter
+                WHERE benutzer_id = ? AND bereich = ? AND mandant_id = ?
+                ORDER BY erstellt_am DESC
+                """,
+                (benutzer_id, bereich, self._active_mandant_id),
+            )
+        )
+
+    def list_help_articles(self, bereich: Optional[str] = None) -> List[sqlite3.Row]:
+        query = "SELECT * FROM hilfe_artikel WHERE mandant_id = ?"
+        params: List[Any] = [self._active_mandant_id]
+        if bereich:
+            query += " AND bereich = ?"
+            params.append(bereich)
+        query += " ORDER BY titel"
+        return list(self.connection.execute(query, params))
+
+    def record_cockpit_snapshot(self, daten: Dict[str, Any]) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO cockpit_snapshots (erstellt_am, daten, mandant_id)
+                VALUES (?, ?, ?)
+                """,
+                (
+                    datetime.utcnow().isoformat(timespec="seconds"),
+                    json.dumps(daten),
+                    self._active_mandant_id,
+                ),
+            )
 
     def close(self) -> None:
         with contextlib.suppress(Exception):

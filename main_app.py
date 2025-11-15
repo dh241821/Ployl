@@ -6119,6 +6119,7 @@ class MedizinprodukteApp(ttkb.Window):
             self.destroy()
             return
         self.user = login.user
+        self.db.set_active_mandant(self.user.mandant_id)
         self.preferences = self.db.get_user_preferences(self.user.id)
         self.current_theme = self.preferences.get("theme", "flatly") or "flatly"
         try:
@@ -6237,6 +6238,17 @@ class MedizinprodukteApp(ttkb.Window):
         tools_menu.add_command(label="Bestellungen", command=self.open_order_center)
         menubar.add_cascade(label="Werkzeuge", menu=tools_menu)
 
+        governance_menu = tk.Menu(menubar, tearoff=0)
+        governance_menu.add_command(label="Freigabecenter", command=self.open_approval_center)
+        governance_menu.add_command(label="CAPA-Board", command=self.open_capa_board)
+        governance_menu.add_command(label="Compliance-Assistent", command=self.open_compliance_assistant)
+        governance_menu.add_command(label="Schulungsnachweise", command=self.open_training_center)
+        governance_menu.add_command(label="Operations-Cockpit", command=self.open_operations_cockpit)
+        governance_menu.add_separator()
+        governance_menu.add_command(label="Dashboard gestalten", command=self.open_dashboard_designer)
+        governance_menu.add_command(label="Filter-Bibliothek", command=self.open_filter_library)
+        menubar.add_cascade(label="Governance", menu=governance_menu)
+
         account_menu = tk.Menu(menubar, tearoff=0)
         account_menu.add_command(label="Mein Konto", command=self.open_account_dialog)
         account_menu.add_command(label="Passwort ändern", command=self.open_password_dialog)
@@ -6339,6 +6351,41 @@ class MedizinprodukteApp(ttkb.Window):
 
     def open_order_center(self) -> None:
         dialog = OrderCenterDialog(self, self.db, self.user)
+        self.wait_window(dialog)
+
+    def open_approval_center(self) -> None:
+        dialog = ApprovalCenterDialog(self, self.db, self.user)
+        self.wait_window(dialog)
+        self.refresh_all()
+
+    def open_capa_board(self) -> None:
+        dialog = CapaBoardDialog(self, self.db)
+        self.wait_window(dialog)
+
+    def open_compliance_assistant(self) -> None:
+        dialog = ComplianceAssistantDialog(self, self.db)
+        self.wait_window(dialog)
+
+    def open_training_center(self) -> None:
+        if not self.user:
+            return
+        dialog = TrainingCenterDialog(self, self.db, self.user)
+        self.wait_window(dialog)
+
+    def open_operations_cockpit(self) -> None:
+        dialog = OperationsCockpitDialog(self, self.db)
+        self.wait_window(dialog)
+
+    def open_dashboard_designer(self) -> None:
+        if not self.user:
+            return
+        dialog = DashboardDesignerDialog(self, self.db, self.user)
+        self.wait_window(dialog)
+
+    def open_filter_library(self) -> None:
+        if not self.user:
+            return
+        dialog = FilterLibraryDialog(self, self.db, self.user)
         self.wait_window(dialog)
 
     def open_account_dialog(self) -> None:
@@ -6508,6 +6555,357 @@ class MedizinprodukteApp(ttkb.Window):
 
     def _theme_button_text(self) -> str:
         return "Dunkelmodus" if self.current_theme not in self._dark_themes() else "Hellmodus"
+
+
+class ApprovalCenterDialog(ttkb.Toplevel):
+    def __init__(self, master: tk.Misc, db: DatabaseManager, user: Optional[User]) -> None:
+        super().__init__(master)
+        self.title("Freigabecenter")
+        self.geometry("720x440")
+        self.db = db
+        self.user = user
+
+        container = ttkb.Frame(self, padding=15)
+        container.pack(fill=BOTH, expand=True)
+
+        toolbar = ttkb.Frame(container)
+        toolbar.pack(fill=tk.X, pady=(0, 10))
+        ttkb.Button(toolbar, text="Freigeben", command=lambda: self._update_status("genehmigt"), bootstyle="success").pack(side=LEFT)
+        ttkb.Button(toolbar, text="Ablehnen", command=lambda: self._update_status("abgelehnt"), bootstyle="danger").pack(side=LEFT, padx=8)
+
+        columns = [
+            {"text": "ID"},
+            {"text": "Produkt"},
+            {"text": "Schritt"},
+            {"text": "Status"},
+            {"text": "Kommentar"},
+        ]
+        self.table = Tableview(container, coldata=columns, rowdata=[], pagesize=18)
+        self.table.pack(fill=BOTH, expand=True)
+        self.refresh()
+        self.grab_set()
+
+    def refresh(self) -> None:
+        self.table.delete_rows()
+        for row in self.db.list_product_approvals():
+            self.table.insert_row(
+                rowkey=row["id"],
+                values=(
+                    row["id"],
+                    f"{row['produkt_name']} ({row['seriennummer']})" if row["produkt_name"] else row["seriennummer"],
+                    row["schritt"],
+                    row["status"],
+                    row["kommentar"] or "",
+                ),
+            )
+
+    def _update_status(self, status: str) -> None:
+        selected = self.table.get_selected_row()
+        if not selected:
+            Messagebox.show_warning("Bitte Eintrag auswählen", "Hinweis")
+            return
+        dialog = SimpleEntryDialog(self, "Kommentar", ["Kommentar"])
+        self.wait_window(dialog)
+        kommentar = dialog.result[0] if dialog and dialog.result else ""
+        self.db.update_product_approval_status(
+            int(selected.key),
+            status=status,
+            benutzer_id=self.user.id if self.user else None,
+            kommentar=kommentar,
+        )
+        self.refresh()
+
+
+class CapaBoardDialog(ttkb.Toplevel):
+    def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
+        super().__init__(master)
+        self.title("CAPA-Board")
+        self.geometry("700x440")
+        self.db = db
+
+        container = ttkb.Frame(self, padding=15)
+        container.pack(fill=BOTH, expand=True)
+
+        toolbar = ttkb.Frame(container)
+        toolbar.pack(fill=tk.X, pady=(0, 10))
+        ttkb.Button(toolbar, text="Neue Maßnahme", command=self.create_action, bootstyle="success").pack(side=LEFT)
+        ttkb.Button(toolbar, text="Erledigt", command=lambda: self._change_status("erledigt"), bootstyle="secondary").pack(side=LEFT, padx=8)
+
+        columns = [
+            {"text": "ID"},
+            {"text": "Beschreibung"},
+            {"text": "Produkt"},
+            {"text": "Fällig"},
+            {"text": "Status"},
+        ]
+        self.table = Tableview(container, coldata=columns, rowdata=[], pagesize=18)
+        self.table.pack(fill=BOTH, expand=True)
+        self.refresh()
+        self.grab_set()
+
+    def refresh(self) -> None:
+        self.table.delete_rows()
+        for row in self.db.list_capa_actions():
+            self.table.insert_row(
+                rowkey=row["id"],
+                values=(
+                    row["id"],
+                    row["beschreibung"],
+                    row["produkt_name"] or "",
+                    row["faellig_am"] or "",
+                    row["status"],
+                ),
+            )
+
+    def create_action(self) -> None:
+        dialog = SimpleEntryDialog(self, "Neue Maßnahme", ["Beschreibung", "Produkt-ID", "Fälligkeitsdatum (YYYY-MM-DD)"])
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        beschreibung, produkt_id, faellig_text = dialog.result
+        produkt_ref = int(produkt_id) if produkt_id.strip() else None
+        faellig = None
+        if faellig_text.strip():
+            try:
+                faellig = datetime.strptime(faellig_text.strip(), "%Y-%m-%d").date()
+            except ValueError:
+                Messagebox.show_warning("Datum konnte nicht interpretiert werden", "Hinweis")
+                return
+        self.db.create_capa_action(
+            produkt_id=produkt_ref,
+            beschreibung=beschreibung,
+            faellig_am=faellig,
+            verantwortlicher_id=None,
+        )
+        self.refresh()
+
+    def _change_status(self, status: str) -> None:
+        selected = self.table.get_selected_row()
+        if not selected:
+            Messagebox.show_warning("Bitte Eintrag auswählen", "Hinweis")
+            return
+        self.db.update_capa_status(int(selected.key), status=status)
+        self.refresh()
+
+
+class ComplianceAssistantDialog(ttkb.Toplevel):
+    def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
+        super().__init__(master)
+        self.title("Compliance-Assistent")
+        self.geometry("640x420")
+        self.db = db
+
+        container = ttkb.Frame(self, padding=15)
+        container.pack(fill=BOTH, expand=True)
+
+        toolbar = ttkb.Frame(container)
+        toolbar.pack(fill=tk.X, pady=(0, 10))
+        ttkb.Button(toolbar, text="Regelwerk hinzufügen", command=self.add_regelwerk, bootstyle="success").pack(side=LEFT)
+
+        columns = [
+            {"text": "Name"},
+            {"text": "Beschreibung"},
+            {"text": "Intervall"},
+        ]
+        self.table = Tableview(container, coldata=columns, rowdata=[], pagesize=16)
+        self.table.pack(fill=BOTH, expand=True)
+        self.refresh()
+        self.grab_set()
+
+    def refresh(self) -> None:
+        self.table.delete_rows()
+        for row in self.db.list_regelwerke():
+            self.table.insert_row(
+                rowkey=row["id"],
+                values=(row["name"], row["beschreibung"] or "", row["intervall_monate"] or "-"),
+            )
+
+    def add_regelwerk(self) -> None:
+        dialog = SimpleEntryDialog(self, "Regelwerk", ["Name", "Beschreibung", "Intervall (Monate)"])
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        name, beschreibung, intervall = dialog.result
+        months = int(intervall) if intervall.strip() else None
+        self.db.save_regelwerk(
+            regelwerk_id=None,
+            name=name,
+            beschreibung=beschreibung,
+            intervall_monate=months,
+        )
+        self.refresh()
+
+
+class TrainingCenterDialog(ttkb.Toplevel):
+    def __init__(self, master: tk.Misc, db: DatabaseManager, user: User) -> None:
+        super().__init__(master)
+        self.title("Schulungsnachweise")
+        self.geometry("640x420")
+        self.db = db
+        self.user = user
+
+        container = ttkb.Frame(self, padding=15)
+        container.pack(fill=BOTH, expand=True)
+
+        ttkb.Label(container, text=f"Nachweise für {user.full_name}", font=("Helvetica", 12, "bold")).pack(pady=(0, 10))
+
+        columns = [
+            {"text": "Titel"},
+            {"text": "Version"},
+            {"text": "Bestätigt"},
+        ]
+        self.table = Tableview(container, coldata=columns, rowdata=[], pagesize=14)
+        self.table.pack(fill=BOTH, expand=True)
+
+        ttkb.Button(container, text="Schulung bestätigen", command=self.confirm_selected, bootstyle="success").pack(pady=10)
+        self.refresh()
+        self.grab_set()
+
+    def refresh(self) -> None:
+        self.table.delete_rows()
+        confirmations = {row["verfahren_id"]: row for row in self.db.list_user_trainings(self.user.id)}
+        for row in self.db.list_verfahren():
+            bestaetigt = confirmations.get(row["id"])
+            self.table.insert_row(
+                rowkey=row["id"],
+                values=(row["titel"], row["version"], bestaetigt["bestaetigt_am"] if bestaetigt else ""),
+            )
+
+    def confirm_selected(self) -> None:
+        selected = self.table.get_selected_row()
+        if not selected:
+            Messagebox.show_warning("Bitte Schulung auswählen", "Hinweis")
+            return
+        self.db.confirm_training(benutzer_id=self.user.id, verfahren_id=int(selected.key))
+        self.refresh()
+
+
+class OperationsCockpitDialog(ttkb.Toplevel):
+    def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
+        super().__init__(master)
+        self.title("Operations-Cockpit")
+        self.geometry("520x320")
+        self.db = db
+
+        container = ttkb.Frame(self, padding=20)
+        container.pack(fill=BOTH, expand=True)
+
+        self.stats_label = ttkb.Label(container, text="", justify=tk.LEFT, font=("Helvetica", 11))
+        self.stats_label.pack(fill=BOTH, expand=True)
+
+        ttkb.Button(container, text="Snapshot speichern", command=self.save_snapshot, bootstyle="info").pack(pady=12)
+        self.refresh()
+        self.grab_set()
+
+    def refresh(self) -> None:
+        material = self.db.material_statistics()
+        stats = [
+            f"Produkte gesamt: {len(self.db.list_products())}",
+            f"Materialpositionen: {material['total_items']}",
+            f"Materialbestand: {material['total_bestand']}",
+            f"Offene Freigaben: {len(self.db.list_product_approvals(status='offen'))}",
+        ]
+        self.stats_label.configure(text="\n".join(stats))
+
+    def save_snapshot(self) -> None:
+        daten = {
+            "zeitpunkt": datetime.utcnow().isoformat(timespec="seconds"),
+            "produkte": len(self.db.list_products()),
+            "material": self.db.material_statistics(),
+        }
+        self.db.record_cockpit_snapshot(daten)
+        Messagebox.show_info("Snapshot gespeichert", "Erfolg")
+
+
+class DashboardDesignerDialog(ttkb.Toplevel):
+    def __init__(self, master: tk.Misc, db: DatabaseManager, user: User) -> None:
+        super().__init__(master)
+        self.title("Dashboard gestalten")
+        self.geometry("420x260")
+        self.db = db
+        self.user = user
+
+        container = ttkb.Frame(self, padding=20)
+        container.pack(fill=BOTH, expand=True)
+
+        ttkb.Label(container, text="Widgets auswählen", font=("Helvetica", 12, "bold")).pack(pady=(0, 10))
+        self.widgets: Dict[str, ttkb.BooleanVar] = {
+            "kpi": ttkb.BooleanVar(value=True),
+            "diagramm": ttkb.BooleanVar(value=True),
+            "warnungen": ttkb.BooleanVar(value=True),
+        }
+        for key, var in self.widgets.items():
+            ttkb.Checkbutton(
+                container,
+                text=key.capitalize(),
+                variable=var,
+                bootstyle="round-toggle",
+            ).pack(anchor=tk.W)
+
+        ttkb.Button(container, text="Speichern", command=self.save, bootstyle="success").pack(pady=15)
+        self.grab_set()
+
+    def save(self) -> None:
+        layout = {key: var.get() for key, var in self.widgets.items()}
+        self.db.save_dashboard_layout(self.user.id, layout)
+        Messagebox.show_info("Dashboard-Einstellungen gespeichert", "Erfolg")
+        self.destroy()
+
+
+class FilterLibraryDialog(ttkb.Toplevel):
+    def __init__(self, master: tk.Misc, db: DatabaseManager, user: User) -> None:
+        super().__init__(master)
+        self.title("Filter-Bibliothek")
+        self.geometry("540x360")
+        self.db = db
+        self.user = user
+
+        container = ttkb.Frame(self, padding=15)
+        container.pack(fill=BOTH, expand=True)
+
+        toolbar = ttkb.Frame(container)
+        toolbar.pack(fill=tk.X, pady=(0, 10))
+        ttkb.Button(toolbar, text="Filter speichern", command=self.save_filter, bootstyle="success").pack(side=LEFT)
+
+        columns = [
+            {"text": "Bereich"},
+            {"text": "Name"},
+            {"text": "Erstellt"},
+        ]
+        self.table = Tableview(container, coldata=columns, rowdata=[], pagesize=16)
+        self.table.pack(fill=BOTH, expand=True)
+        self.refresh()
+        self.grab_set()
+
+    def refresh(self) -> None:
+        self.table.delete_rows()
+        for bereich in ["produkte", "fahrzeuge", "material", "standorte"]:
+            for row in self.db.list_filter_sets(self.user.id, bereich):
+                self.table.insert_row(
+                    values=(bereich.capitalize(), row["name"], row["erstellt_am"]),
+                )
+
+    def save_filter(self) -> None:
+        dialog = SimpleEntryDialog(
+            self,
+            "Filter speichern",
+            ["Bereich (produkte/fahrzeuge/material/standorte)", "Bezeichnung"],
+        )
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        area, name = dialog.result
+        area = area.strip().lower() or "produkte"
+        if area not in {"produkte", "fahrzeuge", "material", "standorte"}:
+            Messagebox.show_warning("Bereich wird nicht unterstützt", "Hinweis")
+            return
+        self.db.save_filter_set(
+            benutzer_id=self.user.id,
+            bereich=area,
+            name=name,
+            daten={},
+        )
+        self.refresh()
 
 
 if __name__ == "__main__":
