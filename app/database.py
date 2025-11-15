@@ -7,9 +7,9 @@ import contextlib
 import hashlib
 import io
 import json
+import logging
 import shutil
 import sqlite3
-from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -18,8 +18,16 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
 import qrcode
-
-DATABASE_FILE = Path("medizinprodukte.db")
+from app.auth import (
+    LocationPermission,
+    PERMISSION_COLUMNS,
+    PERMISSION_DEFAULTS,
+    PERMISSION_MODULES,
+    ROLE_CHOICES,
+    ROLE_PERMISSION_PRESETS,
+    User,
+)
+from app.config import get_db_path
 
 STATUS_LABELS: Dict[str, str] = {
     "im_dienst": "Im Dienst",
@@ -632,142 +640,80 @@ BEREICH_VORSCHLAEGE: List[str] = list(BEREICH_BEZIRK_MAP.keys())
 BEZIRK_VORSCHLAEGE: List[str] = sorted(BEZIRK_TO_BEREICH.keys())
 
 
-PERMISSION_MODULES: List[Tuple[str, str]] = [
-    ("standorte", "Standorte"),
-    ("produkte", "Produkte"),
-    ("material", "Material"),
-    ("fahrzeuge", "Fahrzeuge"),
-]
-
-PERMISSION_COLUMNS: List[str] = [
-    f"{module}_{suffix}"
-    for module, _label in PERMISSION_MODULES
-    for suffix in ("lesen", "schreiben")
-]
-
-
-def _permission_map(default: bool) -> Dict[str, bool]:
-    return {column: default for column in PERMISSION_COLUMNS}
-
-
-PERMISSION_DEFAULTS: Dict[str, bool] = _permission_map(True)
-
-ROLE_PERMISSION_PRESETS: Dict[str, Dict[str, bool]] = {
-    "admin": _permission_map(True),
-    "leitstelle": {
-        **_permission_map(False),
-        "standorte_lesen": True,
-        "standorte_schreiben": True,
-        "fahrzeuge_lesen": True,
-        "fahrzeuge_schreiben": True,
-        "produkte_lesen": True,
-    },
-    "technik": {
-        **_permission_map(False),
-        "produkte_lesen": True,
-        "produkte_schreiben": True,
-        "fahrzeuge_lesen": True,
-        "material_lesen": True,
-        "material_schreiben": True,
-    },
-    "lager": {
-        **_permission_map(False),
-        "material_lesen": True,
-        "material_schreiben": True,
-    },
-    "benutzer": {
-        **_permission_map(False),
-        "standorte_lesen": True,
-        "produkte_lesen": True,
-        "produkte_schreiben": True,
-        "material_lesen": True,
-        "material_schreiben": True,
-        "fahrzeuge_lesen": True,
-    },
-    "viewer": {
-        **_permission_map(False),
-        "standorte_lesen": True,
-        "produkte_lesen": True,
-        "material_lesen": True,
-        "fahrzeuge_lesen": True,
-    },
-}
-
-ROLE_CHOICES: List[str] = list(ROLE_PERMISSION_PRESETS.keys())
-
-
-@dataclass
-class LocationPermission:
-    """Represents read/write permissions for a specific location."""
-
-    standort_id: int
-    lesen: bool
-    schreiben: bool
-    label: str = ""
-
-
-@dataclass
-class User:
-    """Represents an authenticated user."""
-
-    id: int
-    username: str
-    full_name: str
-    role: str
-    email: str
-    mandant_id: int
-    standorte_lesen: bool
-    standorte_schreiben: bool
-    produkte_lesen: bool
-    produkte_schreiben: bool
-    material_lesen: bool
-    material_schreiben: bool
-    fahrzeuge_lesen: bool
-    fahrzeuge_schreiben: bool
-    location_permissions: Dict[int, LocationPermission] = field(default_factory=dict)
-
-    def can_read(self, module: str) -> bool:
-        """Return whether the user is allowed to read the given module."""
-
-        return bool(getattr(self, f"{module}_lesen", False))
-
-    def can_write(self, module: str) -> bool:
-        """Return whether the user is allowed to write the given module."""
-
-        return bool(getattr(self, f"{module}_schreiben", False))
-
-    def can_read_location(self, standort_id: Optional[int]) -> bool:
-        """Return whether the user may read data for the given location."""
-
-        if not self.location_permissions:
-            return True
-        if standort_id is None:
-            return True
-        permission = self.location_permissions.get(int(standort_id))
-        return bool(permission and permission.lesen)
-
-    def can_write_location(self, standort_id: Optional[int]) -> bool:
-        """Return whether the user may write data for the given location."""
-
-        if not self.location_permissions:
-            return True
-        if standort_id is None:
-            return True
-        permission = self.location_permissions.get(int(standort_id))
-        return bool(permission and permission.schreiben)
-
-
 class DatabaseManager:
     """High level database helper that wraps raw SQLite access."""
 
-    def __init__(self, db_path: Path = DATABASE_FILE) -> None:
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[Path] = None) -> None:
+        resolved_path = Path(db_path) if db_path is not None else get_db_path()
+        self.db_path = resolved_path
         self.connection = sqlite3.connect(self.db_path)
         self.connection.row_factory = sqlite3.Row
         self._location_cache: Dict[int, sqlite3.Row] = {}
         self._active_mandant_id: int = 1
         self.initialize_schema()
         self.ensure_default_admin()
+
+    def _log_internal_error(self, message: str, exc: Exception) -> None:
+        """Log unexpected database errors without interrupting the UI."""
+
+        logging.getLogger(__name__).error("%s: %s", message, exc)
+
+    def _table_exists(self, name: str, *, kind: str = "table") -> bool:
+        row = self.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = ? AND name = ?",
+            (kind, name),
+        ).fetchone()
+        return bool(row)
+
+    def _ensure_schema_version(self) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_version (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    version INTEGER NOT NULL
+                )
+                """
+            )
+        row = self.connection.execute(
+            "SELECT version FROM schema_version WHERE id = 1"
+        ).fetchone()
+        if not row:
+            with self.connection:
+                self.connection.execute(
+                    "INSERT INTO schema_version (id, version) VALUES (1, 1)"
+                )
+
+    def _ensure_audit_storage(self) -> None:
+        has_audit_table = self._table_exists("audit_log")
+        has_system_table = self._table_exists("system_audit")
+        with self.connection:
+            if not has_audit_table and has_system_table:
+                self.connection.execute("ALTER TABLE system_audit RENAME TO audit_log")
+                has_audit_table = True
+                has_system_table = False
+            elif not has_audit_table:
+                self.connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS audit_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tabelle TEXT NOT NULL,
+                        datensatz_id INTEGER,
+                        aktion TEXT NOT NULL,
+                        vorher TEXT,
+                        nachher TEXT,
+                        zeitstempel TEXT NOT NULL,
+                        benutzer_id INTEGER,
+                        mandant_id INTEGER NOT NULL DEFAULT 1,
+                        FOREIGN KEY(benutzer_id) REFERENCES benutzer(id) ON DELETE SET NULL
+                    )
+                    """
+                )
+        if not has_system_table and not self._table_exists("system_audit", kind="view"):
+            with self.connection:
+                self.connection.execute(
+                    "CREATE VIEW IF NOT EXISTS system_audit AS SELECT * FROM audit_log"
+                )
 
     # ------------------------------------------------------------------
     # schema
@@ -1067,18 +1013,6 @@ class DatabaseManager:
                     FOREIGN KEY(benutzer_id) REFERENCES benutzer(id) ON DELETE SET NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS system_audit (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tabelle TEXT NOT NULL,
-                    datensatz_id INTEGER,
-                    aktion TEXT NOT NULL,
-                    vorher TEXT,
-                    nachher TEXT,
-                    zeitstempel TEXT NOT NULL,
-                    benutzer_id INTEGER,
-                    FOREIGN KEY(benutzer_id) REFERENCES benutzer(id) ON DELETE SET NULL
-                );
-
                 CREATE TABLE IF NOT EXISTS ics_importe (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     quelle TEXT NOT NULL,
@@ -1225,6 +1159,8 @@ class DatabaseManager:
                 """
             )
 
+        self._ensure_schema_version()
+        self._ensure_audit_storage()
         self._seed_defaults()
         self._ensure_columns()
         self._backfill_product_manufacturers()
@@ -1268,7 +1204,7 @@ class DatabaseManager:
             self._ensure_column("benutzer", column, "INTEGER NOT NULL DEFAULT 1")
 
         self._ensure_column("system_log", "benutzer_id", "INTEGER REFERENCES benutzer(id)")
-        self._ensure_column("system_audit", "benutzer_id", "INTEGER REFERENCES benutzer(id)")
+        self._ensure_column("audit_log", "benutzer_id", "INTEGER REFERENCES benutzer(id)")
 
         self._ensure_column("kontakte", "unternehmen", "TEXT")
         self._ensure_column("kontakte", "website", "TEXT")
@@ -1288,7 +1224,7 @@ class DatabaseManager:
             "bestellungen",
             "bestellpositionen",
             "system_log",
-            "system_audit",
+            "audit_log",
             "produkt_log",
             "fahrzeug_log",
             "ics_importe",
@@ -2274,31 +2210,34 @@ class DatabaseManager:
     # vehicle management
     # ------------------------------------------------------------------
     def list_vehicles(self) -> List[sqlite3.Row]:
-        return list(
-            self.connection.execute(
-                """
-                SELECT f.*,
-                       s.land AS standort_land,
-                       s.bereich AS standort_bereich,
-                       s.bezirk AS standort_bezirk,
-                       s.bezirksstelle AS standort_bezirksstelle,
-                       s.ortsstelle AS standort_ortsstelle,
-                       COALESCE(s.ortsstelle, s.bezirksstelle, s.bezirk, s.bereich, s.land, '') AS standort_name,
-                       fm.name AS marke_name,
-                       fmo.name AS fahrzeug_typ_name,
-                       fk.name AS fahrzeug_kategorie_name
-                FROM fahrzeuge AS f
-                LEFT JOIN standorte AS s ON s.id = f.standort_id
-                LEFT JOIN fahrzeug_marken AS fm ON fm.id = f.marke_id
-                LEFT JOIN fahrzeug_modelle AS fmo ON fmo.id = f.fahrzeugtyp_id
-                LEFT JOIN fahrzeug_kategorien AS fk ON fk.id = f.fahrzeugkategorie_id
-                WHERE f.mandant_id = ?
-                ORDER BY f.name
-                """
-            ,
-                (self._active_mandant_id,)
+        try:
+            return list(
+                self.connection.execute(
+                    """
+                    SELECT f.*,
+                           s.land AS standort_land,
+                           s.bereich AS standort_bereich,
+                           s.bezirk AS standort_bezirk,
+                           s.bezirksstelle AS standort_bezirksstelle,
+                           s.ortsstelle AS standort_ortsstelle,
+                           COALESCE(s.ortsstelle, s.bezirksstelle, s.bezirk, s.bereich, s.land, '') AS standort_name,
+                           fm.name AS marke_name,
+                           fmo.name AS fahrzeug_typ_name,
+                           fk.name AS fahrzeug_kategorie_name
+                    FROM fahrzeuge AS f
+                    LEFT JOIN standorte AS s ON s.id = f.standort_id
+                    LEFT JOIN fahrzeug_marken AS fm ON fm.id = f.marke_id
+                    LEFT JOIN fahrzeug_modelle AS fmo ON fmo.id = f.fahrzeugtyp_id
+                    LEFT JOIN fahrzeug_kategorien AS fk ON fk.id = f.fahrzeugkategorie_id
+                    WHERE f.mandant_id = ?
+                    ORDER BY f.name
+                    """,
+                    (self._active_mandant_id,),
+                )
             )
-        )
+        except sqlite3.Error as exc:
+            self._log_internal_error("list_vehicles failed", exc)
+            return []
 
     def get_vehicle(self, fahrzeug_id: int) -> Optional[sqlite3.Row]:
         return self.connection.execute(
@@ -2521,8 +2460,42 @@ class DatabaseManager:
     # product management
     # ------------------------------------------------------------------
     def list_products(self) -> List[sqlite3.Row]:
-        return list(
-            self.connection.execute(
+        try:
+            return list(
+                self.connection.execute(
+                    """
+                    SELECT p.*,
+                           k.name AS kategorie_name,
+                           s.land AS standort_land,
+                           s.bereich AS standort_bereich,
+                           s.bezirk AS standort_bezirk,
+                           s.bezirksstelle AS standort_bezirksstelle,
+                           s.ortsstelle AS standort_ortsstelle,
+                           COALESCE(s.ortsstelle, s.bezirksstelle, s.bezirk, s.bereich, s.land, '') AS standort_name,
+                           f.name AS fahrzeug_name,
+                           pt.name AS produkt_typ_name,
+                           pm.name AS produkt_modell_name,
+                           ph.name AS produkt_hersteller_name
+                    FROM produkte AS p
+                    LEFT JOIN kategorien AS k ON k.id = p.kategorie_id
+                    LEFT JOIN standorte AS s ON s.id = p.standort_id
+                    LEFT JOIN fahrzeuge AS f ON f.id = p.fahrzeug_id
+                    LEFT JOIN produkt_typen AS pt ON pt.id = p.produkt_typ_id
+                    LEFT JOIN produkt_modelle AS pm ON pm.id = p.produkt_modell_id
+                    LEFT JOIN produkt_hersteller AS ph ON ph.id = p.produkt_hersteller_id
+                    WHERE p.mandant_id = ?
+                    ORDER BY p.name
+                    """,
+                    (self._active_mandant_id,),
+                )
+            )
+        except sqlite3.Error as exc:
+            self._log_internal_error("list_products failed", exc)
+            return []
+
+    def get_product(self, produkt_id: int) -> Optional[sqlite3.Row]:
+        try:
+            return self.connection.execute(
                 """
                 SELECT p.*,
                        k.name AS kategorie_name,
@@ -2543,40 +2516,13 @@ class DatabaseManager:
                 LEFT JOIN produkt_typen AS pt ON pt.id = p.produkt_typ_id
                 LEFT JOIN produkt_modelle AS pm ON pm.id = p.produkt_modell_id
                 LEFT JOIN produkt_hersteller AS ph ON ph.id = p.produkt_hersteller_id
-                WHERE p.mandant_id = ?
-                ORDER BY p.name
-                """
-            ,
-                (self._active_mandant_id,)
-            )
-        )
-
-    def get_product(self, produkt_id: int) -> Optional[sqlite3.Row]:
-        return self.connection.execute(
-            """
-            SELECT p.*, 
-                   k.name AS kategorie_name,
-                   s.land AS standort_land,
-                   s.bereich AS standort_bereich,
-                   s.bezirk AS standort_bezirk,
-                   s.bezirksstelle AS standort_bezirksstelle,
-                   s.ortsstelle AS standort_ortsstelle,
-                   COALESCE(s.ortsstelle, s.bezirksstelle, s.bezirk, s.bereich, s.land, '') AS standort_name,
-                   f.name AS fahrzeug_name,
-                   pt.name AS produkt_typ_name,
-                   pm.name AS produkt_modell_name,
-                   ph.name AS produkt_hersteller_name
-            FROM produkte AS p
-            LEFT JOIN kategorien AS k ON k.id = p.kategorie_id
-            LEFT JOIN standorte AS s ON s.id = p.standort_id
-            LEFT JOIN fahrzeuge AS f ON f.id = p.fahrzeug_id
-            LEFT JOIN produkt_typen AS pt ON pt.id = p.produkt_typ_id
-            LEFT JOIN produkt_modelle AS pm ON pm.id = p.produkt_modell_id
-            LEFT JOIN produkt_hersteller AS ph ON ph.id = p.produkt_hersteller_id
-            WHERE p.id = ? AND p.mandant_id = ?
-            """,
-            (produkt_id, self._active_mandant_id),
-        ).fetchone()
+                WHERE p.id = ? AND p.mandant_id = ?
+                """,
+                (produkt_id, self._active_mandant_id),
+            ).fetchone()
+        except sqlite3.Error as exc:
+            self._log_internal_error("get_product failed", exc)
+            return None
 
     def serial_exists(self, seriennummer: str, *, exclude_id: Optional[int] = None) -> bool:
         query = "SELECT id FROM produkte WHERE seriennummer = ?"
@@ -2588,6 +2534,67 @@ class DatabaseManager:
         return bool(row)
 
     def add_or_update_product(
+        self,
+        *,
+        produkt_id: Optional[int],
+        name: str,
+        typ: str,
+        seriennummer: str,
+        hersteller: str,
+        anschaffungsdatum: Optional[date],
+        kategorie_id: Optional[int],
+        standort_id: Optional[int],
+        fahrzeug_id: Optional[int],
+        status: str,
+        interne_kennung: str,
+        stk_intervall: int,
+        mtk_intervall: int,
+        stk_aktiv: bool,
+        mtk_aktiv: bool,
+        letzte_stk: Optional[date],
+        letzte_mtk: Optional[date],
+        naechste_stk: Optional[date],
+        naechste_mtk: Optional[date],
+        lagerort: str,
+        produkt_typ_id: Optional[int],
+        produkt_modell_id: Optional[int],
+        produkt_hersteller_id: Optional[int],
+        informationstext: str,
+        user_id: Optional[int] = None,
+    ) -> int:
+        try:
+            return self._add_or_update_product_impl(
+                produkt_id=produkt_id,
+                name=name,
+                typ=typ,
+                seriennummer=seriennummer,
+                hersteller=hersteller,
+                anschaffungsdatum=anschaffungsdatum,
+                kategorie_id=kategorie_id,
+                standort_id=standort_id,
+                fahrzeug_id=fahrzeug_id,
+                status=status,
+                interne_kennung=interne_kennung,
+                stk_intervall=stk_intervall,
+                mtk_intervall=mtk_intervall,
+                stk_aktiv=stk_aktiv,
+                mtk_aktiv=mtk_aktiv,
+                letzte_stk=letzte_stk,
+                letzte_mtk=letzte_mtk,
+                naechste_stk=naechste_stk,
+                naechste_mtk=naechste_mtk,
+                lagerort=lagerort,
+                produkt_typ_id=produkt_typ_id,
+                produkt_modell_id=produkt_modell_id,
+                produkt_hersteller_id=produkt_hersteller_id,
+                informationstext=informationstext,
+                user_id=user_id,
+            )
+        except sqlite3.Error as exc:
+            self._log_internal_error("add_or_update_product failed", exc)
+            raise
+
+    def _add_or_update_product_impl(
         self,
         *,
         produkt_id: Optional[int],
@@ -2805,6 +2812,17 @@ class DatabaseManager:
             except Exception as exc:  # pragma: no cover
                 errors.append(f"{serial}: {exc}")
         return created, errors
+
+    def delete_product(self, produkt_id: int) -> None:
+        try:
+            with self.connection:
+                self.connection.execute(
+                    "DELETE FROM produkte WHERE id = ? AND mandant_id = ?",
+                    (produkt_id, self._active_mandant_id),
+                )
+        except sqlite3.Error as exc:
+            self._log_internal_error("delete_product failed", exc)
+            raise
 
     def mark_product_retired(
         self, produkt_id: int, datum: date, grund: str, *, user_id: Optional[int] = None
@@ -3302,18 +3320,22 @@ class DatabaseManager:
     # material management
     # ------------------------------------------------------------------
     def list_materials(self) -> List[sqlite3.Row]:
-        return list(
-            self.connection.execute(
-                """
-                SELECT m.*, k.name AS kategorie_name
-                FROM verbrauchsmaterial AS m
-                LEFT JOIN kategorien AS k ON k.id = m.kategorie_id
-                WHERE m.mandant_id = ?
-                ORDER BY m.name
-                """,
-                (self._active_mandant_id,),
+        try:
+            return list(
+                self.connection.execute(
+                    """
+                    SELECT m.*, k.name AS kategorie_name
+                    FROM verbrauchsmaterial AS m
+                    LEFT JOIN kategorien AS k ON k.id = m.kategorie_id
+                    WHERE m.mandant_id = ?
+                    ORDER BY m.name
+                    """,
+                    (self._active_mandant_id,),
+                )
             )
-        )
+        except sqlite3.Error as exc:
+            self._log_internal_error("list_materials failed", exc)
+            return []
 
     def add_or_update_material(
         self,
@@ -3368,38 +3390,42 @@ class DatabaseManager:
             return int(cur.lastrowid)
 
     def material_statistics(self) -> Dict[str, Any]:
-        total_items = self.connection.execute(
-            "SELECT COUNT(*) FROM verbrauchsmaterial WHERE mandant_id = ?",
-            (self._active_mandant_id,),
-        ).fetchone()[0]
-        total_bestand = self.connection.execute(
-            "SELECT COALESCE(SUM(ist_bestand), 0) FROM verbrauchsmaterial WHERE mandant_id = ?",
-            (self._active_mandant_id,),
-        ).fetchone()[0]
-        categories = [
-            (
-                row["name"],
-                int(row["anzahl"] or 0),
-                int(row["bestand"] or 0),
-            )
-            for row in self.connection.execute(
-                """
-                SELECT COALESCE(k.name, 'Ohne Kategorie') AS name,
-                       COUNT(*) AS anzahl,
-                       COALESCE(SUM(m.ist_bestand), 0) AS bestand
-                FROM verbrauchsmaterial AS m
-                LEFT JOIN kategorien AS k ON k.id = m.kategorie_id
-                WHERE m.mandant_id = ?
-                GROUP BY name
-                ORDER BY name
-                """,
+        try:
+            total_items = self.connection.execute(
+                "SELECT COUNT(*) FROM verbrauchsmaterial WHERE mandant_id = ?",
                 (self._active_mandant_id,),
-            )
-        ]
-        expiring = self.connection.execute(
-            "SELECT COUNT(*) FROM verbrauchsmaterial WHERE verfallsdatum IS NOT NULL AND mandant_id = ?",
-            (self._active_mandant_id,),
-        ).fetchone()[0]
+            ).fetchone()[0]
+            total_bestand = self.connection.execute(
+                "SELECT COALESCE(SUM(ist_bestand), 0) FROM verbrauchsmaterial WHERE mandant_id = ?",
+                (self._active_mandant_id,),
+            ).fetchone()[0]
+            categories = [
+                (
+                    row["name"],
+                    int(row["anzahl"] or 0),
+                    int(row["bestand"] or 0),
+                )
+                for row in self.connection.execute(
+                    """
+                    SELECT COALESCE(k.name, 'Ohne Kategorie') AS name,
+                           COUNT(*) AS anzahl,
+                           COALESCE(SUM(m.ist_bestand), 0) AS bestand
+                    FROM verbrauchsmaterial AS m
+                    LEFT JOIN kategorien AS k ON k.id = m.kategorie_id
+                    WHERE m.mandant_id = ?
+                    GROUP BY name
+                    ORDER BY name
+                    """,
+                    (self._active_mandant_id,),
+                )
+            ]
+            expiring = self.connection.execute(
+                "SELECT COUNT(*) FROM verbrauchsmaterial WHERE verfallsdatum IS NOT NULL AND mandant_id = ?",
+                (self._active_mandant_id,),
+            ).fetchone()[0]
+        except sqlite3.Error as exc:
+            self._log_internal_error("material_statistics failed", exc)
+            return {"total_items": 0, "total_bestand": 0, "expiring": 0, "categories": []}
         return {
             "total_items": int(total_items or 0),
             "total_bestand": int(total_bestand or 0),
@@ -3644,33 +3670,41 @@ class DatabaseManager:
     # ------------------------------------------------------------------
     def due_products(self) -> List[sqlite3.Row]:
         today_str = date.today().isoformat()
-        return list(
-            self.connection.execute(
-                """
-                SELECT p.*
-                FROM produkte AS p
-                LEFT JOIN wartungen AS w ON w.produkt_id = p.id
-                WHERE (
-                    p.status = 'im_dienst' AND (
-                        (w.durchgefuehrt_am IS NULL AND w.geplanter_termin <= ?)
-                        OR (
-                            w.durchgefuehrt_am IS NOT NULL
-                            AND DATE(w.durchgefuehrt_am, printf('+%d months', p.stk_intervall)) <= ?
+        try:
+            return list(
+                self.connection.execute(
+                    """
+                    SELECT p.*
+                    FROM produkte AS p
+                    LEFT JOIN wartungen AS w ON w.produkt_id = p.id
+                    WHERE (
+                        p.status = 'im_dienst' AND (
+                            (w.durchgefuehrt_am IS NULL AND w.geplanter_termin <= ?)
+                            OR (
+                                w.durchgefuehrt_am IS NOT NULL
+                                AND DATE(w.durchgefuehrt_am, printf('+%d months', p.stk_intervall)) <= ?
+                            )
                         )
                     )
+                    GROUP BY p.id
+                    """,
+                    (today_str, today_str),
                 )
-                GROUP BY p.id
-                """,
-                (today_str, today_str),
             )
-        )
+        except sqlite3.Error as exc:
+            self._log_internal_error("due_products failed", exc)
+            return []
 
     def products_in_repair(self) -> List[sqlite3.Row]:
-        return list(
-            self.connection.execute(
-                "SELECT * FROM produkte WHERE status = 'in_reparatur' ORDER BY name"
+        try:
+            return list(
+                self.connection.execute(
+                    "SELECT * FROM produkte WHERE status = 'in_reparatur' ORDER BY name"
+                )
             )
-        )
+        except sqlite3.Error as exc:
+            self._log_internal_error("products_in_repair failed", exc)
+            return []
 
     def expired_materials(self) -> List[sqlite3.Row]:
         today_str = date.today().isoformat()
@@ -3689,9 +3723,13 @@ class DatabaseManager:
         )
 
     def product_status_counts(self) -> Dict[str, int]:
-        rows = self.connection.execute(
-            "SELECT status, COUNT(*) AS count FROM produkte GROUP BY status"
-        ).fetchall()
+        try:
+            rows = self.connection.execute(
+                "SELECT status, COUNT(*) AS count FROM produkte GROUP BY status"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            self._log_internal_error("product_status_counts failed", exc)
+            return {}
         return {row["status"]: row["count"] for row in rows}
 
     def repair_cost_total(self) -> float:
@@ -4119,7 +4157,7 @@ class DatabaseManager:
         with self.connection:
             self.connection.execute(
                 """
-                INSERT INTO system_audit (
+                INSERT INTO audit_log (
                     tabelle, datensatz_id, aktion, vorher, nachher, zeitstempel, benutzer_id, mandant_id
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -4143,7 +4181,7 @@ class DatabaseManager:
         benutzer_id: Optional[int] = None,
     ) -> List[sqlite3.Row]:
         query = (
-            "SELECT sa.*, b.full_name AS benutzer_name FROM system_audit AS sa "
+            "SELECT sa.*, b.full_name AS benutzer_name FROM audit_log AS sa "
             "LEFT JOIN benutzer AS b ON b.id = sa.benutzer_id"
         )
         params: List[Any] = []
@@ -4348,8 +4386,13 @@ class DatabaseManager:
                 (like, like, self._active_mandant_id),
             ),
         }
-        for key, (query, params) in queries.items():
-            results[key] = list(self.connection.execute(query, params))
+        try:
+            for key, (query, params) in queries.items():
+                results[key] = list(self.connection.execute(query, params))
+        except sqlite3.Error as exc:
+            self._log_internal_error("search_global failed", exc)
+            for key in queries:
+                results.setdefault(key, [])
         return results
 
     # ------------------------------------------------------------------

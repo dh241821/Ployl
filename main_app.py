@@ -20,6 +20,14 @@ from ttkbootstrap.dialogs import Messagebox
 from ttkbootstrap.widgets import DateEntry
 from ttkbootstrap.widgets.tableview import Tableview
 
+from app.auth import (
+    PERMISSION_COLUMNS,
+    PERMISSION_DEFAULTS,
+    PERMISSION_MODULES,
+    ROLE_CHOICES,
+    ROLE_PERMISSION_PRESETS,
+    User,
+)
 from app.database import (
     AUSSCHEIDUNGSGRUND_VORSCHLAEGE,
     BEZIRKSSTELLEN_DATEN,
@@ -34,15 +42,9 @@ from app.database import (
     KOMPONENTEN_VORSCHLAEGE,
     LAND_VORSCHLAEGE,
     MATERIAL_VORSCHLAEGE,
-    PERMISSION_COLUMNS,
-    PERMISSION_DEFAULTS,
-    PERMISSION_MODULES,
-    ROLE_CHOICES,
-    ROLE_PERMISSION_PRESETS,
     PRODUKT_VORSCHLAEGE,
     REPARATUR_DATEI_KATEGORIEN,
     TYP_MODELL_VORSCHLAEGE,
-    User,
 )
 
 import tkinter as tk
