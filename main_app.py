@@ -13,7 +13,7 @@ import sqlite3
 import ttkbootstrap as ttkb
 from ttkbootstrap.constants import BOTH, LEFT, RIGHT, W
 from ttkbootstrap.dialogs import Messagebox
-from ttkbootstrap.widgets import AutocompleteCombobox, DateEntry
+from ttkbootstrap.widgets import DateEntry
 from ttkbootstrap.widgets.tableview import Tableview
 
 from app.database import DatabaseManager, User
@@ -57,6 +57,47 @@ def display_status(value: Optional[str]) -> str:
     return STATUS_VALUE_TO_LABEL.get(value, value)
 
 
+class IdentifierCombobox(ttkb.Combobox):
+    """Lightweight autocomplete combobox for service number selection."""
+
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        values: Optional[Iterable[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(master, values=list(values or ()), **kwargs)
+        self._all_values: List[str] = list(values or ())
+        self.bind("<KeyRelease>", self._on_key_release, add="+")
+
+    def set_completion_list(self, values: Iterable[str]) -> None:
+        """Update the internal value cache and displayed value list."""
+
+        self._all_values = list(values)
+        self.configure(values=self._all_values)
+
+    def _on_key_release(self, event: tk.Event) -> None:  # type: ignore[override]
+        if event.keysym in {"BackSpace", "Left", "Right", "Up", "Down", "Home", "End", "Return", "Tab", "Escape"}:
+            return
+
+        typed = self.get()
+        if not typed:
+            self.configure(values=self._all_values)
+            return
+
+        matches = [value for value in self._all_values if value.lower().startswith(typed.lower())]
+        if not matches:
+            self.configure(values=self._all_values)
+            return
+
+        self.configure(values=matches)
+        suggestion = matches[0]
+        self.set(suggestion)
+        self.icursor(len(typed))
+        self.select_range(len(typed), tk.END)
+
+
 class LoginDialog(ttkb.Toplevel):
     """Simple login dialog that blocks the root window until closed."""
 
@@ -84,12 +125,23 @@ class LoginDialog(ttkb.Toplevel):
         self.identifier_var = ttkb.StringVar()
 
         ttkb.Label(container, text="Dienstnummer").grid(row=0, column=0, sticky=W, pady=(0, 5))
-        self.identifier_box = AutocompleteCombobox(
-            container,
-            textvariable=self.identifier_var,
-            width=30,
-            completevalues=identifiers,
-        )
+        try:
+            from ttkbootstrap.widgets import AutocompleteCombobox  # type: ignore
+
+            self.identifier_box = AutocompleteCombobox(
+                container,
+                textvariable=self.identifier_var,
+                width=30,
+                completevalues=identifiers,
+            )
+        except Exception:
+            self.identifier_box = IdentifierCombobox(
+                container,
+                textvariable=self.identifier_var,
+                width=30,
+                values=identifiers,
+            )
+            self.identifier_box.set_completion_list(identifiers)
         self.identifier_box.grid(row=1, column=0, sticky=W)
         if identifiers:
             self.identifier_var.set(identifiers[0])
