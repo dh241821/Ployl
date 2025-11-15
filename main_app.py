@@ -1138,7 +1138,7 @@ class LocationsFrame(ttkb.Frame):
         self.db = db
 
         toolbar = ttkb.Frame(self)
-        toolbar.pack(fill=tk.X, padx=10, pady=10)
+        toolbar.pack(fill=tk.X, padx=10, pady=(10, 0))
         ttkb.Button(toolbar, text="Neuer Standort", command=self.add_location, bootstyle="success").pack(
             side=LEFT
         )
@@ -1146,6 +1146,26 @@ class LocationsFrame(ttkb.Frame):
             side=LEFT, padx=5
         )
         ttkb.Button(toolbar, text="Löschen", command=self.delete_location, bootstyle="danger").pack(side=LEFT)
+
+        filter_frame = ttkb.Labelframe(self, text="Filter")
+        filter_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
+
+        self._all_locations: List[Dict[str, Any]] = []
+        self._filter_vars: Dict[str, ttkb.StringVar] = {}
+        filter_config = [
+            ("Land", "land"),
+            ("Bereich", "bereich"),
+            ("Bezirk", "bezirk"),
+            ("Bezirksstelle", "bezirksstelle"),
+            ("Ortsstelle", "ortsstelle"),
+        ]
+        for column, (label_text, data_key) in enumerate(filter_config):
+            ttkb.Label(filter_frame, text=label_text).grid(row=0, column=column, sticky=W, padx=5, pady=(5, 2))
+            var = ttkb.StringVar()
+            entry = ttkb.Entry(filter_frame, textvariable=var, width=18)
+            entry.grid(row=1, column=column, sticky=W, padx=5, pady=(0, 8))
+            var.trace_add("write", self._on_filter_change)
+            self._filter_vars[data_key] = var
 
         columns = [
             {"text": "ID"},
@@ -1159,8 +1179,41 @@ class LocationsFrame(ttkb.Frame):
         self.table.pack(fill=BOTH, expand=True, padx=10, pady=10)
 
     def refresh(self) -> None:
+        self._all_locations = [
+            {
+                "id": row["id"],
+                "land": row["land"],
+                "bereich": row["bereich"],
+                "bezirk": row["bezirk"],
+                "bezirksstelle": row["bezirksstelle"],
+                "ortsstelle": row["ortsstelle"],
+            }
+            for row in self.db.list_locations()
+        ]
+        self._apply_filter()
+
+    def _on_filter_change(self, *_args: Any) -> None:
+        self.after_idle(self._apply_filter)
+
+    def _apply_filter(self) -> None:
         self.table.delete_rows()
-        for row in self.db.list_locations():
+        active_filters = {
+            key: var.get().strip().lower()
+            for key, var in self._filter_vars.items()
+            if var.get().strip()
+        }
+        for row in self._all_locations:
+            if not active_filters:
+                matches = True
+            else:
+                matches = True
+                for key, needle in active_filters.items():
+                    haystack = (row.get(key) or "").lower()
+                    if needle not in haystack:
+                        matches = False
+                        break
+            if not matches:
+                continue
             self.table.insert_row(
                 values=(
                     row["id"],
@@ -2195,7 +2248,7 @@ class ProductEditor(ttkb.Toplevel):
         self._select_initial_tab()
 
         button_frame = ttkb.Frame(self, padding=(15, 12))
-        button_frame.pack(fill=tk.X)
+        button_frame.pack(fill=tk.X, side=tk.BOTTOM)
         ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(
             side=RIGHT, padx=5
         )
