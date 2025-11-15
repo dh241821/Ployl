@@ -11,7 +11,7 @@ import shutil
 import sqlite3
 
 import ttkbootstrap as ttkb
-from ttkbootstrap.constants import BOTH, EW, LEFT, RIGHT, W, NW
+from ttkbootstrap.constants import BOTH, LEFT, RIGHT, W
 from ttkbootstrap.dialogs import Messagebox
 from ttkbootstrap.widgets import DateEntry
 from ttkbootstrap.widgets.tableview import Tableview
@@ -2454,7 +2454,7 @@ class ProductEditor(ttkb.Toplevel):
             row=4, column=1, sticky=W
         )
 
-        ttkb.Label(assignment_frame, text="Informationstext").grid(row=5, column=0, sticky=ttkb.NW, pady=4)
+        ttkb.Label(assignment_frame, text="Informationstext").grid(row=5, column=0, sticky=tk.NW, pady=4)
         self.info_text = tk.Text(assignment_frame, height=4, width=45, wrap="word")
         self.info_text.grid(row=5, column=1, sticky=W)
 
@@ -3600,11 +3600,11 @@ class RepairFormDialog(ttkb.Toplevel):
             width=32,
         ).grid(row=3, column=1, sticky=W)
 
-        ttkb.Label(container, text="Beschreibung").grid(row=4, column=0, sticky=ttkb.NW, pady=5)
+        ttkb.Label(container, text="Beschreibung").grid(row=4, column=0, sticky=tk.NW, pady=5)
         self.beschreibung_text.grid(row=4, column=1, sticky=W)
 
         attachments_frame = ttkb.Labelframe(container, text="Anhänge")
-        attachments_frame.grid(row=5, column=0, columnspan=2, pady=10, sticky=ttkb.EW)
+        attachments_frame.grid(row=5, column=0, columnspan=2, pady=10, sticky=tk.EW)
 
         self.attachment_list = tk.Listbox(attachments_frame, width=55, height=4)
         self.attachment_list.pack(side=LEFT, padx=5, pady=5)
