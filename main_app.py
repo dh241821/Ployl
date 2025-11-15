@@ -1702,7 +1702,12 @@ class MasterDataView(ttkb.Frame):
         if show_locations:
             self.locations_frame = LocationsFrame(self.content, db)
             self.locations_frame.set_write_permissions(allow_edit_locations)
-            self._register_section("locations", locations_group or general, "Standortverwaltung", self.locations_frame)
+            self._register_section(
+                "locations_section",
+                locations_group or general,
+                "Standortverwaltung",
+                self.locations_frame,
+            )
 
         self.contacts_frame = ContactsFrame(self.content, db)
         self._register_section("contacts", support_group, "Kontakte", self.contacts_frame)
