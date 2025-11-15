@@ -57,6 +57,16 @@ def display_status(value: Optional[str]) -> str:
     return STATUS_VALUE_TO_LABEL.get(value, value)
 
 
+def bind_date_entry(widget: DateEntry, variable: ttkb.StringVar) -> None:
+    """Attach a StringVar to a DateEntry's embedded Entry widget."""
+
+    widget.entry.configure(textvariable=variable)
+    current = variable.get()
+    widget.entry.delete(0, tk.END)
+    if current:
+        widget.entry.insert(0, current)
+
+
 class IdentifierCombobox(ttkb.Combobox):
     """Lightweight autocomplete combobox for service number selection."""
 
@@ -2013,11 +2023,11 @@ class RetireProductDialog(ttkb.Toplevel):
         self.date_var = ttkb.StringVar(value=date.today().strftime(DATE_FORMAT))
         self.date_entry = DateEntry(
             container,
-            textvariable=self.date_var,
             dateformat=DATE_FORMAT,
             width=18,
         )
         self.date_entry.grid(row=0, column=1, sticky=W)
+        bind_date_entry(self.date_entry, self.date_var)
 
         ttkb.Label(container, text="Grund").grid(row=1, column=0, sticky=W, pady=5)
         self.reason_var = ttkb.StringVar()
@@ -2255,13 +2265,11 @@ class ProductEditor(ttkb.Toplevel):
         ttkb.Label(info_frame, text="Anschaffungsdatum (TT.MM.JJJJ)").grid(row=4, column=0, sticky=W, pady=4)
         self.anschaffungsdatum_entry = DateEntry(
             info_frame,
-            textvariable=self.anschaffungsdatum_var,
             dateformat=DATE_FORMAT,
             width=18,
         )
         self.anschaffungsdatum_entry.grid(row=4, column=1, sticky=W)
-        if not self.anschaffungsdatum_var.get():
-            self.anschaffungsdatum_entry.entry.delete(0, tk.END)
+        bind_date_entry(self.anschaffungsdatum_entry, self.anschaffungsdatum_var)
 
         ttkb.Label(info_frame, text="Kategorie").grid(row=5, column=0, sticky=W, pady=4)
         self.kategorie_box = ttkb.Combobox(
@@ -2291,23 +2299,19 @@ class ProductEditor(ttkb.Toplevel):
         ttkb.Label(stk_frame, text="Letzte STK").grid(row=0, column=1, padx=(20, 5), sticky=W)
         self.stk_last_entry = DateEntry(
             stk_frame,
-            textvariable=self.stk_last_var,
             dateformat=DATE_FORMAT,
             width=16,
         )
         self.stk_last_entry.grid(row=0, column=2, sticky=W)
-        if not self.stk_last_var.get():
-            self.stk_last_entry.entry.delete(0, tk.END)
+        bind_date_entry(self.stk_last_entry, self.stk_last_var)
         ttkb.Label(stk_frame, text="Nächste STK").grid(row=0, column=3, padx=(20, 5), sticky=W)
         self.stk_next_entry = DateEntry(
             stk_frame,
-            textvariable=self.stk_next_var,
             dateformat=DATE_FORMAT,
             width=16,
         )
         self.stk_next_entry.grid(row=0, column=4, sticky=W)
-        if not self.stk_next_var.get():
-            self.stk_next_entry.entry.delete(0, tk.END)
+        bind_date_entry(self.stk_next_entry, self.stk_next_var)
         ttkb.Button(
             stk_frame,
             text="Berechnen",
@@ -2332,23 +2336,19 @@ class ProductEditor(ttkb.Toplevel):
         ttkb.Label(mtk_frame, text="Letzte MTK").grid(row=0, column=1, padx=(20, 5), sticky=W)
         self.mtk_last_entry = DateEntry(
             mtk_frame,
-            textvariable=self.mtk_last_var,
             dateformat=DATE_FORMAT,
             width=16,
         )
         self.mtk_last_entry.grid(row=0, column=2, sticky=W)
-        if not self.mtk_last_var.get():
-            self.mtk_last_entry.entry.delete(0, tk.END)
+        bind_date_entry(self.mtk_last_entry, self.mtk_last_var)
         ttkb.Label(mtk_frame, text="Nächste MTK").grid(row=0, column=3, padx=(20, 5), sticky=W)
         self.mtk_next_entry = DateEntry(
             mtk_frame,
-            textvariable=self.mtk_next_var,
             dateformat=DATE_FORMAT,
             width=16,
         )
         self.mtk_next_entry.grid(row=0, column=4, sticky=W)
-        if not self.mtk_next_var.get():
-            self.mtk_next_entry.entry.delete(0, tk.END)
+        bind_date_entry(self.mtk_next_entry, self.mtk_next_var)
         ttkb.Button(
             mtk_frame,
             text="Berechnen",
@@ -2971,13 +2971,11 @@ class ComponentFormDialog(ttkb.Toplevel):
         ttkb.Label(container, text="Anschaffungsdatum (TT.MM.JJJJ)").grid(row=4, column=0, sticky=W, pady=5)
         self.anschaffungsdatum_entry = DateEntry(
             container,
-            textvariable=self.anschaffungsdatum_var,
             dateformat=DATE_FORMAT,
             width=18,
         )
         self.anschaffungsdatum_entry.grid(row=4, column=1, sticky=W)
-        if not self.anschaffungsdatum_var.get():
-            self.anschaffungsdatum_entry.entry.delete(0, tk.END)
+        bind_date_entry(self.anschaffungsdatum_entry, self.anschaffungsdatum_var)
 
         ttkb.Label(container, text="Bemerkung").grid(row=5, column=0, sticky=W, pady=5)
         ttkb.Entry(container, textvariable=self.bemerkung_var, width=40).grid(row=5, column=1, sticky=W)
@@ -3275,13 +3273,11 @@ class MaintenanceFormDialog(ttkb.Toplevel):
         ttkb.Label(container, text="Geplanter Termin (TT.MM.JJJJ)*").grid(row=0, column=0, sticky=W, pady=5)
         self.geplant_entry = DateEntry(
             container,
-            textvariable=self.geplant_var,
             dateformat=DATE_FORMAT,
             width=18,
         )
         self.geplant_entry.grid(row=0, column=1, sticky=W)
-        if not self.geplant_var.get():
-            self.geplant_entry.entry.delete(0, tk.END)
+        bind_date_entry(self.geplant_entry, self.geplant_var)
 
         ttkb.Label(container, text="Typ*").grid(row=1, column=0, sticky=W, pady=5)
         ttkb.Entry(container, textvariable=self.typ_var, width=35).grid(row=1, column=1, sticky=W)
@@ -3292,13 +3288,11 @@ class MaintenanceFormDialog(ttkb.Toplevel):
         ttkb.Label(container, text="Durchgeführt am (TT.MM.JJJJ)").grid(row=3, column=0, sticky=W, pady=5)
         self.durchgefuehrt_entry = DateEntry(
             container,
-            textvariable=self.durchgefuehrt_var,
             dateformat=DATE_FORMAT,
             width=18,
         )
         self.durchgefuehrt_entry.grid(row=3, column=1, sticky=W)
-        if not self.durchgefuehrt_var.get():
-            self.durchgefuehrt_entry.entry.delete(0, tk.END)
+        bind_date_entry(self.durchgefuehrt_entry, self.durchgefuehrt_var)
 
         ttkb.Label(container, text="Durchgeführt von").grid(row=4, column=0, sticky=W, pady=5)
         ttkb.Entry(container, textvariable=self.von_var, width=35).grid(row=4, column=1, sticky=W)
@@ -3526,11 +3520,11 @@ class RepairFormDialog(ttkb.Toplevel):
         ttkb.Label(container, text="Datum (TT.MM.JJJJ)").grid(row=0, column=0, sticky=W, pady=5)
         self.datum_entry = DateEntry(
             container,
-            textvariable=self.datum_var,
             dateformat=DATE_FORMAT,
             width=18,
         )
         self.datum_entry.grid(row=0, column=1, sticky=W)
+        bind_date_entry(self.datum_entry, self.datum_var)
 
         ttkb.Label(container, text="Kosten").grid(row=1, column=0, sticky=W, pady=5)
         ttkb.Entry(container, textvariable=self.kosten_var, width=35).grid(row=1, column=1, sticky=W)
@@ -3752,13 +3746,11 @@ class VehicleEditor(ttkb.Toplevel):
         ttkb.Label(form, text="Inbetriebnahme (TT.MM.JJJJ)").grid(row=5, column=0, sticky=W, pady=5)
         self.inbetriebnahme_entry = DateEntry(
             form,
-            textvariable=self.inbetriebnahme_var,
             dateformat=DATE_FORMAT,
             width=18,
         )
         self.inbetriebnahme_entry.grid(row=5, column=1, sticky=W)
-        if not self.inbetriebnahme_var.get():
-            self.inbetriebnahme_entry.entry.delete(0, tk.END)
+        bind_date_entry(self.inbetriebnahme_entry, self.inbetriebnahme_var)
 
         ttkb.Label(form, text="Standort").grid(row=6, column=0, sticky=W, pady=5)
         self.standort_box = ttkb.Combobox(
@@ -3794,13 +3786,11 @@ class VehicleEditor(ttkb.Toplevel):
         ttkb.Label(decommission_frame, text="Datum (TT.MM.JJJJ)").grid(row=0, column=1, sticky=W, pady=5)
         self.decommission_entry = DateEntry(
             decommission_frame,
-            textvariable=self.decommission_date_var,
             dateformat=DATE_FORMAT,
             width=18,
         )
         self.decommission_entry.grid(row=0, column=2, sticky=W)
-        if not self.decommission_date_var.get():
-            self.decommission_entry.entry.delete(0, tk.END)
+        bind_date_entry(self.decommission_entry, self.decommission_date_var)
 
         button_frame = ttkb.Frame(container)
         button_frame.pack(fill=tk.X, pady=(15, 0))
@@ -4020,13 +4010,11 @@ class MaterialEditor(ttkb.Toplevel):
         ttkb.Label(form, text="Verfallsdatum (TT.MM.JJJJ)").grid(row=5, column=0, sticky=W, pady=5)
         self.expiry_entry = DateEntry(
             form,
-            textvariable=self.expiry_var,
             dateformat=DATE_FORMAT,
             width=18,
         )
         self.expiry_entry.grid(row=5, column=1, sticky=W)
-        if not self.expiry_var.get():
-            self.expiry_entry.entry.delete(0, tk.END)
+        bind_date_entry(self.expiry_entry, self.expiry_var)
         ttkb.Checkbutton(
             form,
             text="Verfallsdatum aktiv",
