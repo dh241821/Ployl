@@ -363,3 +363,18 @@ def test_component_assignment_history(tmp_path):
     assert any(row["fahrzeug_id"] == fahrzeug1 for row in history)
     retired_entry = next(row for row in history if row["fahrzeug_id"] == fahrzeug1)
     assert retired_entry["entfernt_am"]
+
+
+def test_upload_archive(tmp_path):
+    manager = _create_db(tmp_path)
+    temp_file = tmp_path / "handbuch.pdf"
+    temp_file.write_text("Testinhalt")
+    doc_id = manager.add_upload_document(
+        name="Handbuch",
+        source_path=temp_file,
+        upload_kategorie_id=None,
+    )
+    docs = manager.list_upload_documents()
+    assert any(row["id"] == doc_id for row in docs)
+    manager.delete_upload_document(doc_id)
+    assert not manager.list_upload_documents()

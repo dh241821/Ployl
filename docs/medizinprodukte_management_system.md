@@ -123,7 +123,7 @@ Das Dashboard ist die Startseite nach dem Login. Es zeigt:
 - **Lebenslauf**: Detaillierter HTML-Bericht mit QR-Code und Einsatzfahrzeug-Timeline
 - **Listendruck**: Aktuelle Filterliste als HTML drucken
 - **CSV-Export**: Alle Produkte als CSV exportieren (für Excel)
-- **Fahrzeug-Lebenslauf**: Direkt aus dem Produkteditor abrufbar und zeigt alle Ereignisse des zugeordneten Fahrzeugs
+- **Fahrzeug-Lebenslauf**: Im Tab „Fahrzeuge" abrufbar und zeigt alle Ereignisse des zugeordneten Fahrzeugs
 - **Komponenten-Lebenslauf**: Dokumentiert jede Komponente inklusive Einsatz- und Reparaturhistorie
 
 ---
@@ -154,7 +154,7 @@ Das Dashboard ist die Startseite nach dem Login. Es zeigt:
 
 #### Fahrzeug-Historie
 - Jede Änderung wird im Logbuch dokumentiert
-- **Fahrzeug-Lebenslauf**: HTML-Report mit allen Ereignissen, Produkten und Wartungen
+- **Fahrzeug-Lebenslauf**: HTML-Report mit allen Ereignissen, Produkten und Wartungen (abrufbar über den Fahrzeug-Tab)
 
 #### Fahrzeugtausch dokumentieren
 - Rechtsklick auf Fahrzeug → "Fahrzeugtausch"

@@ -795,12 +795,6 @@ class ProductsView(ttkb.Frame):
         self.mass_upload_button.pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="Export CSV", command=self.export_products, bootstyle="info").pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="Lebenslauf", command=self.export_lifecycle, bootstyle="info").pack(side=LEFT, padx=5)
-        ttkb.Button(
-            toolbar,
-            text="Fahrzeug-Lebenslauf",
-            command=self.export_vehicle_lifecycle_for_product,
-            bootstyle="secondary",
-        ).pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="Liste HTML", command=self.export_html, bootstyle="primary").pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="Liste PDF", command=self.export_pdf, bootstyle="primary").pack(side=LEFT, padx=5)
         ttkb.Button(toolbar, text="ICS Export", command=self.export_ics, bootstyle="secondary").pack(side=LEFT, padx=5)
@@ -1241,14 +1235,15 @@ class ProductsView(ttkb.Frame):
         if not product_id:
             return
         product = self.db.get_product(product_id)
-        if not product or not product.get("fahrzeug_id"):
+        fahrzeug_id = safe_row_get(product, "fahrzeug_id") if product is not None else None
+        if not product or not fahrzeug_id:
             Messagebox.show_warning(
                 "Dieses Produkt ist keinem Fahrzeug zugeordnet.",
                 "Fahrzeug-Lebenslauf",
             )
             return
-        fahrzeug_id = int(product["fahrzeug_id"])
-        vehicle_name = product.get("fahrzeug_name") or f"Fahrzeug {fahrzeug_id}"
+        fahrzeug_id = int(fahrzeug_id)
+        vehicle_name = safe_row_get(product, "fahrzeug_name") or f"Fahrzeug {fahrzeug_id}"
         prefix = slugify_filename(f"fahrzeug_{fahrzeug_id}_{vehicle_name}")
         path = build_report_path(prefix, ".html")
         try:
@@ -2895,6 +2890,22 @@ class UploadCategoriesFrame(SimpleLookupFrame):
             label="Kategorie",
             suggestions=REPARATUR_DATEI_KATEGORIEN,
         )
+        info_bar = ttkb.Frame(self)
+        info_bar.pack(fill=tk.X, padx=10, pady=(0, 10))
+        ttkb.Button(
+            info_bar,
+            text="Upload-Ablage öffnen",
+            command=self.open_library,
+            bootstyle="info",
+        ).pack(side=LEFT)
+        ttkb.Label(
+            info_bar,
+            text="Dateien werden hier mandantenweit abgelegt und in Reparaturen referenziert.",
+        ).pack(side=LEFT, padx=10)
+
+    def open_library(self) -> None:
+        dialog = UploadLibraryDialog(self, self.db)
+        self.wait_window(dialog)
 
 
 class MaterialNamesFrame(SimpleLookupFrame):
@@ -6809,6 +6820,117 @@ class AttachmentCategoryDialog(LargeDialog):
         self.result = (category_id, label or "Unkategorisiert")
         self.destroy()
 
+
+class UploadLibraryDialog(LargeDialog):
+    def __init__(self, master: tk.Misc, db: DatabaseManager) -> None:
+        super().__init__(master, min_width=820, min_height=560)
+        self.db = db
+        self.title("Upload-Ablage")
+
+        container = ttkb.Frame(self, padding=20)
+        container.pack(fill=BOTH, expand=True)
+
+        toolbar = ttkb.Frame(container)
+        toolbar.pack(fill=tk.X, pady=(0, 10))
+        ttkb.Button(toolbar, text="Datei hochladen", command=self.upload_file, bootstyle="success").pack(side=LEFT)
+        ttkb.Button(toolbar, text="Öffnen", command=self.open_selected, bootstyle="secondary").pack(side=LEFT, padx=5)
+        ttkb.Button(toolbar, text="Löschen", command=self.delete_selected, bootstyle="danger").pack(side=LEFT, padx=5)
+
+        self.table = Tableview(
+            container,
+            coldata=[
+                {"text": "ID", "stretch": False},
+                {"text": "Kategorie"},
+                {"text": "Titel"},
+                {"text": "Originalname"},
+                {"text": "Erstellt"},
+            ],
+            rowdata=[],
+            paginated=False,
+        )
+        self.table.pack(fill=BOTH, expand=True)
+        self.refresh()
+
+    def refresh(self) -> None:
+        self.table.delete_rows()
+        for row in self.db.list_upload_documents():
+            self.table.insert_row(
+                values=(
+                    row["id"],
+                    row["upload_kategorie_name"] or "-",
+                    row["name"],
+                    row["original_name"],
+                    row["created_at"],
+                )
+            )
+
+    def _selected_id(self) -> Optional[int]:
+        rows = self.table.get_rows("selected")
+        if not rows:
+            Messagebox.show_info("Bitte einen Eintrag auswählen", "Upload-Ablage")
+            return None
+        return int(rows[0].values[0])
+
+    def upload_file(self) -> None:
+        file_path = filedialog.askopenfilename(title="Datei auswählen")
+        if not file_path:
+            return
+        categories = self.db.list_upload_categories()
+        category_id = None
+        category_label = "Unkategorisiert"
+        if categories:
+            dialog = AttachmentCategoryDialog(self, categories)
+            self.wait_window(dialog)
+            if dialog.result is None:
+                return
+            category_id, category_label = dialog.result
+        default_title = Path(file_path).stem
+        dialog = SimpleEntryDialog(self, "Titel", ["Titel"], [default_title])
+        self.wait_window(dialog)
+        if dialog.result:
+            title = dialog.result[0].strip() or default_title
+        else:
+            title = default_title
+        try:
+            self.db.add_upload_document(
+                name=title,
+                source_path=Path(file_path),
+                upload_kategorie_id=category_id,
+            )
+        except sqlite3.Error as exc:
+            Messagebox.show_error(str(exc), "Upload fehlgeschlagen")
+            return
+        Messagebox.show_info(
+            f"Datei '{Path(file_path).name}' unter '{category_label}' abgelegt.",
+            "Upload abgeschlossen",
+        )
+        self.refresh()
+
+    def open_selected(self) -> None:
+        document_id = self._selected_id()
+        if not document_id:
+            return
+        row = self.db.get_upload_document(document_id)
+        if not row:
+            Messagebox.show_error("Eintrag nicht gefunden", "Upload-Ablage")
+            return
+        path = Path(row["speicherpfad"])
+        if not path.exists():
+            Messagebox.show_error("Datei wurde verschoben oder gelöscht.", "Upload-Ablage")
+            return
+        try:
+            webbrowser.open_new_tab(path.resolve().as_uri())
+        except Exception as exc:  # pragma: no cover
+            Messagebox.show_error(str(exc), "Öffnen fehlgeschlagen")
+
+    def delete_selected(self) -> None:
+        document_id = self._selected_id()
+        if not document_id:
+            return
+        if not Messagebox.okcancel("Eintrag wirklich löschen?", "Löschen"):
+            return
+        self.db.delete_upload_document(document_id)
+        self.refresh()
 
 class MassUploadDialog(LargeDialog):
     def __init__(

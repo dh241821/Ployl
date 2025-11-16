@@ -32,7 +32,7 @@ Dieses Handbuch beschreibt die wichtigsten Arbeitsabläufe für Anwenderinnen un
 - Doppelklicke auf ein Produkt oder nutze **Bearbeiten** im Kontextmenü.
 - Änderungen an Standort, Fahrzeug, Status oder STK/MTK-Daten werden versioniert protokolliert.
 - Der Lebenslauf-Bericht wird automatisch mit dem Schema `JJJJ-MM-TT_Produkttyp_Modell_InterneKennung` benannt und enthält eine Einsatzfahrzeug-Timeline, die jede Zuordnung zu Funkkennungen inklusive Zeitraum dokumentiert.
-- Über den Button **Fahrzeug-Lebenslauf** lässt sich direkt aus dem Produkt die komplette Fahrzeughistorie des aktuell zugeordneten Fahrzeugs exportieren.
+- Fahrzeughistorien werden über den Tab **Fahrzeuge** exportiert; der Produkt-Lebenslauf enthält bereits eine eigene Einsatz-Timeline mit allen bisherigen Funkkennungen.
 
 ### 3.3 Reparatur melden
 
@@ -72,6 +72,7 @@ Dieses Handbuch beschreibt die wichtigsten Arbeitsabläufe für Anwenderinnen un
 - **Standorte:** Abbildung der Hierarchie Landesverband → Bereich → Bezirk → Bezirksstelle → Ortsstelle.
 - **Hersteller, Produkttypen, Modelle, Komponenten- und Wartungstypen** lassen sich hinzufügen oder entfernen.
 - **Kontakte:** Zusätzliche Felder für Unternehmen, Website und Info unterstützen Reparatur- und Lieferantenverwaltung.
+- **Upload-Kategorien & Ablage:** Verwaltet Kategorien und öffnet eine Upload-Ablage, in der du Dateien zentral speicherst und später in Reparaturen referenzierst.
 - **Benutzer:** Weise Lese-/Schreibrechte pro Modul und optional pro Standort zu.
 
 ## 7. Auswertungen & Exporte

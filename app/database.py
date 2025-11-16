@@ -12,6 +12,7 @@ import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from uuid import uuid4
 
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -26,7 +27,7 @@ from app.auth import (
     ROLE_PERMISSION_PRESETS,
     User,
 )
-from app.config import get_db_path
+from app.config import get_db_path, get_storage_dir
 from app.security import hash_password, verify_password
 from app.services import (
     ValidationError as ProductValidationError,
@@ -1138,6 +1139,17 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS upload_kategorien (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL UNIQUE
+                );
+
+                CREATE TABLE IF NOT EXISTS upload_ablage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    original_name TEXT NOT NULL,
+                    speicherpfad TEXT NOT NULL,
+                    upload_kategorie_id INTEGER,
+                    created_at TEXT NOT NULL,
+                    mandant_id INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(upload_kategorie_id) REFERENCES upload_kategorien(id) ON DELETE SET NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS ausscheidungsgruende (
@@ -2605,6 +2617,76 @@ class DatabaseManager:
                 "DELETE FROM upload_kategorien WHERE id = ?",
                 (category_id,),
             )
+
+    def list_upload_documents(self) -> List[sqlite3.Row]:
+        try:
+            return list(
+                self.connection.execute(
+                    """
+                    SELECT ua.*, uk.name AS upload_kategorie_name
+                    FROM upload_ablage AS ua
+                    LEFT JOIN upload_kategorien AS uk ON uk.id = ua.upload_kategorie_id
+                    WHERE ua.mandant_id = ?
+                    ORDER BY datetime(ua.created_at) DESC
+                    """,
+                    (self._active_mandant_id,),
+                )
+            )
+        except sqlite3.Error as exc:  # pragma: no cover
+            self._log_internal_error("list_upload_documents failed", exc)
+            return []
+
+    def add_upload_document(
+        self,
+        *,
+        name: str,
+        source_path: Path,
+        upload_kategorie_id: Optional[int],
+    ) -> int:
+        storage_dir = get_storage_dir() / "uploads"
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        destination_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex}{source_path.suffix}"
+        destination = storage_dir / destination_name
+        shutil.copy2(source_path, destination)
+        created_at = datetime.utcnow().isoformat()
+        with self.connection:
+            cursor = self.connection.execute(
+                """
+                INSERT INTO upload_ablage (
+                    name, original_name, speicherpfad, upload_kategorie_id, created_at, mandant_id
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    name,
+                    source_path.name,
+                    str(destination),
+                    upload_kategorie_id,
+                    created_at,
+                    self._active_mandant_id,
+                ),
+            )
+        return int(cursor.lastrowid)
+
+    def get_upload_document(self, document_id: int) -> Optional[sqlite3.Row]:
+        cursor = self.connection.execute(
+            """
+            SELECT ua.*, uk.name AS upload_kategorie_name
+            FROM upload_ablage AS ua
+            LEFT JOIN upload_kategorien AS uk ON uk.id = ua.upload_kategorie_id
+            WHERE ua.id = ? AND ua.mandant_id = ?
+            """,
+            (document_id, self._active_mandant_id),
+        )
+        return cursor.fetchone()
+
+    def delete_upload_document(self, document_id: int) -> None:
+        row = self.get_upload_document(document_id)
+        file_path = Path(row["speicherpfad"]) if row and row["speicherpfad"] else None
+        with self.connection:
+            self.connection.execute("DELETE FROM upload_ablage WHERE id = ?", (document_id,))
+        if file_path and file_path.exists():
+            with contextlib.suppress(OSError):
+                file_path.unlink()
 
     def list_material_names(self) -> List[sqlite3.Row]:
         return list(
