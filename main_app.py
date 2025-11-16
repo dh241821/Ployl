@@ -5845,26 +5845,6 @@ class ComponentFormDialog(LargeDialog):
         self.destroy()
 
 
-class ComponentRepairDialog(RepairFormDialog):
-    def __init__(
-        self,
-        master: tk.Misc,
-        *,
-        component_name: str,
-        repair_types: List[sqlite3.Row],
-        upload_categories: List[sqlite3.Row],
-        contacts: List[sqlite3.Row],
-    ) -> None:
-        super().__init__(
-            master,
-            repair_types=repair_types,
-            upload_categories=upload_categories,
-            contacts=contacts,
-            title="Komponente in Reparatur",
-            subject_label=f"Komponente: {component_name}",
-        )
-
-
 class ComponentRepairHistoryDialog(LargeDialog):
     def __init__(
         self,
@@ -6719,6 +6699,26 @@ class RepairFormDialog(LargeDialog):
             "attachments": self.attachments,
         }
         self.destroy()
+
+
+class ComponentRepairDialog(RepairFormDialog):
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        component_name: str,
+        repair_types: List[sqlite3.Row],
+        upload_categories: List[sqlite3.Row],
+        contacts: List[sqlite3.Row],
+    ) -> None:
+        super().__init__(
+            master,
+            repair_types=repair_types,
+            upload_categories=upload_categories,
+            contacts=contacts,
+            title="Komponente in Reparatur",
+            subject_label=f"Komponente: {component_name}",
+        )
 
 
 class AttachmentCategoryDialog(LargeDialog):
