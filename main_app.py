@@ -236,6 +236,39 @@ def notify_report_saved(path: Path, title: str = "Export") -> None:
         pass
 
 
+def persist_component_repair(
+    db: DatabaseManager,
+    komponent_id: int,
+    data: Dict[str, Any],
+    *,
+    user_id: Optional[int],
+) -> None:
+    repair_id = db.add_component_repair(
+        komponent_id=komponent_id,
+        datum=data["datum"],
+        kosten=data["kosten"],
+        kontakt_id=data["kontakt_id"],
+        beschreibung=data["beschreibung"],
+        reparatur_art_id=data["reparatur_art_id"],
+        benutzer_id=user_id,
+    )
+    for attachment in data.get("attachments", []):
+        source = Path(attachment["quelle"])
+        target_name = f"component_{repair_id}_{source.name}"
+        target_path = REPAIR_STORAGE / target_name
+        try:
+            shutil.copy2(source, target_path)
+        except OSError as exc:
+            Messagebox.show_warning(f"Anhang konnte nicht kopiert werden: {exc}", "Hinweis")
+            continue
+        db.add_component_repair_attachment(
+            komponenten_reparatur_id=repair_id,
+            dateiname=source.name,
+            speicherpfad=str(target_path),
+            upload_kategorie_id=attachment.get("upload_kategorie_id"),
+        )
+
+
 def parse_date(value: str) -> Optional[date]:
     value = value.strip()
     if not value:
@@ -1282,6 +1315,12 @@ class ComponentSearchView(ttkb.Frame):
             toolbar, text="Aktivieren", command=self.reactivate_component, bootstyle="secondary"
         )
         self.activate_button.pack(side=LEFT, padx=5)
+        ttkb.Button(
+            toolbar,
+            text="Reparaturen anzeigen",
+            command=self.show_repairs,
+            bootstyle="info",
+        ).pack(side=LEFT, padx=(5, 0))
         self.action_buttons = [
             self.repair_button,
             self.repair_done_button,
@@ -1379,15 +1418,21 @@ class ComponentSearchView(ttkb.Frame):
         if not selection:
             return
         component_id, row = selection
-        dialog = ComponentRepairDialog(self, component_name=row["name"])
+        dialog = ComponentRepairDialog(
+            self,
+            component_name=row["name"],
+            repair_types=self.db.list_repair_types(),
+            upload_categories=self.db.list_upload_categories(),
+            contacts=self.db.list_contacts(),
+        )
         self.wait_window(dialog)
         if not dialog.result:
             return
-        self.db.mark_component_in_repair(
+        persist_component_repair(
+            self.db,
             component_id,
-            beschreibung=dialog.result["beschreibung"],
-            datum=dialog.result["datum"],
-            benutzer_id=self._current_user_id(),
+            dialog.result,
+            user_id=self._current_user_id(),
         )
         self.refresh()
 
@@ -1449,6 +1494,19 @@ class ComponentSearchView(ttkb.Frame):
             benutzer_id=self._current_user_id(),
         )
         self.refresh()
+
+    def show_repairs(self) -> None:
+        selection = self._selected_component()
+        if not selection:
+            return
+        component_id, row = selection
+        dialog = ComponentRepairHistoryDialog(
+            self,
+            self.db,
+            component_id,
+            row["name"],
+        )
+        self.wait_window(dialog)
 
 
 class VehiclesView(ttkb.Frame):
@@ -5365,6 +5423,13 @@ class ComponentsTab(ttkb.Frame):
             bootstyle="secondary",
         )
         self.reactivate_btn.pack(side=LEFT, padx=5)
+        self.history_btn = ttkb.Button(
+            self.toolbar,
+            text="Reparaturen",
+            command=self.show_repair_history,
+            bootstyle="info",
+        )
+        self.history_btn.pack(side=LEFT, padx=(5, 0))
 
         columns = [
             {"text": "Kennung"},
@@ -5391,7 +5456,13 @@ class ComponentsTab(ttkb.Frame):
         for button in (self.add_btn, self.edit_btn, self.delete_btn):
             button.configure(state=tk.NORMAL)
         manage_state = tk.NORMAL if self.produkt_id else tk.DISABLED
-        for button in (self.repair_btn, self.repair_done_btn, self.retire_btn, self.reactivate_btn):
+        for button in (
+            self.repair_btn,
+            self.repair_done_btn,
+            self.retire_btn,
+            self.reactivate_btn,
+            self.history_btn,
+        ):
             button.configure(state=manage_state)
         if self.produkt_id:
             self.info_label.configure(text="")
@@ -5587,15 +5658,21 @@ class ComponentsTab(ttkb.Frame):
         if not selection:
             return
         component_id, row = selection
-        dialog = ComponentRepairDialog(self, component_name=row["name"])
+        dialog = ComponentRepairDialog(
+            self,
+            component_name=row["name"],
+            repair_types=self.db.list_repair_types(),
+            upload_categories=self.db.list_upload_categories(),
+            contacts=self.db.list_contacts(),
+        )
         self.wait_window(dialog)
         if not dialog.result:
             return
-        self.db.mark_component_in_repair(
+        persist_component_repair(
+            self.db,
             component_id,
-            beschreibung=dialog.result["beschreibung"],
-            datum=dialog.result["datum"],
-            benutzer_id=self.user.id if self.user else None,
+            dialog.result,
+            user_id=self.user.id if self.user else None,
         )
         self.refresh()
 
@@ -5651,6 +5728,19 @@ class ComponentsTab(ttkb.Frame):
             benutzer_id=self.user.id if self.user else None,
         )
         self.refresh()
+
+    def show_repair_history(self) -> None:
+        selection = self._selected_existing_component()
+        if not selection:
+            return
+        component_id, row = selection
+        dialog = ComponentRepairHistoryDialog(
+            self,
+            self.db,
+            component_id,
+            row["name"],
+        )
+        self.wait_window(dialog)
 
 
 class ComponentFormDialog(LargeDialog):
@@ -5755,11 +5845,39 @@ class ComponentFormDialog(LargeDialog):
         self.destroy()
 
 
-class ComponentRepairDialog(LargeDialog):
-    def __init__(self, master: tk.Misc, *, component_name: str) -> None:
-        super().__init__(master, min_width=420, min_height=260)
-        self.title("Komponente in Reparatur")
-        self.result: Optional[Dict[str, Any]] = None
+class ComponentRepairDialog(RepairFormDialog):
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        component_name: str,
+        repair_types: List[sqlite3.Row],
+        upload_categories: List[sqlite3.Row],
+        contacts: List[sqlite3.Row],
+    ) -> None:
+        super().__init__(
+            master,
+            repair_types=repair_types,
+            upload_categories=upload_categories,
+            contacts=contacts,
+            title="Komponente in Reparatur",
+            subject_label=f"Komponente: {component_name}",
+        )
+
+
+class ComponentRepairHistoryDialog(LargeDialog):
+    def __init__(
+        self,
+        master: tk.Misc,
+        db: DatabaseManager,
+        komponent_id: int,
+        component_name: str,
+    ) -> None:
+        super().__init__(master, min_width=780, min_height=520)
+        self.title("Komponentenreparaturen")
+        self.db = db
+        self.komponent_id = komponent_id
+        self.cache: Dict[int, sqlite3.Row] = {}
 
         container = ttkb.Frame(self, padding=20)
         container.pack(fill=BOTH, expand=True)
@@ -5767,39 +5885,76 @@ class ComponentRepairDialog(LargeDialog):
         ttkb.Label(
             container,
             text=f"Komponente: {component_name}",
-            font=("Inter", 11, "bold"),
-        ).grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 10))
+            font=("Inter", 12, "bold"),
+        ).pack(anchor=W, pady=(0, 12))
 
-        self.date_var = ttkb.StringVar(value=date.today().strftime(DATE_FORMAT))
-        ttkb.Label(container, text="Reparaturdatum").grid(row=1, column=0, sticky=W, pady=5)
-        self.date_entry = DateEntry(container, dateformat=DATE_FORMAT, width=18)
-        self.date_entry.grid(row=1, column=1, sticky=W)
-        bind_date_entry(self.date_entry, self.date_var)
+        columns = [
+            {"text": "ID"},
+            {"text": "Datum"},
+            {"text": "Typ"},
+            {"text": "Kontakt"},
+            {"text": "Kosten"},
+            {"text": "Beschreibung"},
+            {"text": "Anhänge"},
+        ]
+        self.table = Tableview(container, coldata=columns, rowdata=[], pagesize=12)
+        self.table.pack(fill=BOTH, expand=True, pady=(0, 10))
 
-        self.note_var = ttkb.StringVar()
-        ttkb.Label(container, text="Beschreibung").grid(row=2, column=0, sticky=W, pady=5)
-        ttkb.Entry(container, textvariable=self.note_var, width=42).grid(row=2, column=1, sticky=W)
-
-        button_frame = ttkb.Frame(container)
-        button_frame.grid(row=3, column=0, columnspan=2, pady=(20, 0))
-        ttkb.Button(button_frame, text="Speichern", command=self.on_save, bootstyle="success").pack(
-            side=LEFT, padx=5
+        button_row = ttkb.Frame(container)
+        button_row.pack(fill=tk.X)
+        ttkb.Button(
+            button_row,
+            text="Anhänge anzeigen",
+            command=self.show_attachments,
+            bootstyle="secondary",
+        ).pack(side=LEFT)
+        ttkb.Button(button_row, text="Schließen", command=self.destroy, bootstyle="secondary").pack(
+            side=RIGHT
         )
-        ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(side=LEFT)
 
-        self.grab_set()
+        self.refresh()
 
-    def on_save(self) -> None:
-        try:
-            datum = parse_date(self.date_var.get())
-        except ValueError:
-            Messagebox.show_error("Ungültiges Datum", "Fehler")
+    def refresh(self) -> None:
+        self.table.delete_rows()
+        self.cache = {}
+        for row in self.db.list_component_repairs(self.komponent_id):
+            repair_id = int(row["id"])
+            self.cache[repair_id] = row
+            kosten = ""
+            if row["kosten"] is not None:
+                kosten = f"{row['kosten']:.2f} €"
+            self.table.insert_row(
+                values=(
+                    repair_id,
+                    format_date(row["datum"]),
+                    row["reparatur_art_name"] or "",
+                    row["kontakt_name"] or "",
+                    kosten,
+                    row["beschreibung"] or "",
+                    row["attachment_count"] or 0,
+                )
+            )
+
+    def selected_repair_id(self) -> Optional[int]:
+        rows = self.table.get_rows("selected")
+        if not rows:
+            Messagebox.show_info("Bitte einen Eintrag auswählen", "Information")
+            return None
+        return int(rows[0].values[0])
+
+    def show_attachments(self) -> None:
+        repair_id = self.selected_repair_id()
+        if not repair_id:
             return
-        self.result = {
-            "datum": datum or date.today(),
-            "beschreibung": self.note_var.get().strip(),
-        }
-        self.destroy()
+        attachments = self.db.list_component_repair_attachments(repair_id)
+        if not attachments:
+            Messagebox.show_info("Keine Anhänge vorhanden", "Information")
+            return
+        lines = []
+        for entry in attachments:
+            label = entry["upload_kategorie_name"] or "Anhang"
+            lines.append(f"{label}: {entry['dateiname']}\n{entry['speicherpfad']}")
+        Messagebox.show_info("\n\n".join(lines), "Anhänge")
 
 
 class ComponentRetireDialog(LargeDialog):
@@ -6415,9 +6570,11 @@ class RepairFormDialog(LargeDialog):
         repair_types: List[sqlite3.Row],
         upload_categories: List[sqlite3.Row],
         contacts: List[sqlite3.Row],
+        title: str = "Reparatur melden",
+        subject_label: Optional[str] = None,
     ) -> None:
         super().__init__(master, min_width=680, min_height=520)
-        self.title("Reparatur melden")
+        self.title(title)
         self.repair_types = repair_types
         self.upload_categories = upload_categories
         self.contacts = contacts
@@ -6433,41 +6590,56 @@ class RepairFormDialog(LargeDialog):
         self.kontakt_var = ttkb.StringVar()
         self.beschreibung_text = tk.Text(container, height=4, width=40, wrap="word")
 
-        ttkb.Label(container, text="Datum (TT.MM.JJJJ)").grid(row=0, column=0, sticky=W, pady=5)
+        row = 0
+        if subject_label:
+            ttkb.Label(
+                container,
+                text=subject_label,
+                font=("Inter", 11, "bold"),
+            ).grid(row=row, column=0, columnspan=2, sticky=W, pady=(0, 10))
+            row += 1
+
+        ttkb.Label(container, text="Datum (TT.MM.JJJJ)").grid(row=row, column=0, sticky=W, pady=5)
         self.datum_entry = DateEntry(
             container,
             dateformat=DATE_FORMAT,
             width=18,
         )
-        self.datum_entry.grid(row=0, column=1, sticky=W)
+        self.datum_entry.grid(row=row, column=1, sticky=W)
         bind_date_entry(self.datum_entry, self.datum_var)
+        row += 1
 
-        ttkb.Label(container, text="Kosten").grid(row=1, column=0, sticky=W, pady=5)
-        ttkb.Entry(container, textvariable=self.kosten_var, width=35).grid(row=1, column=1, sticky=W)
+        ttkb.Label(container, text="Kosten").grid(row=row, column=0, sticky=W, pady=5)
+        ttkb.Entry(container, textvariable=self.kosten_var, width=35).grid(row=row, column=1, sticky=W)
+        row += 1
 
-        ttkb.Label(container, text="Reparaturtyp").grid(row=2, column=0, sticky=W, pady=5)
+        ttkb.Label(container, text="Reparaturtyp").grid(row=row, column=0, sticky=W, pady=5)
         ttkb.Combobox(
             container,
             textvariable=self.repair_type_var,
             values=[row["name"] for row in self.repair_types],
             state="readonly",
             width=32,
-        ).grid(row=2, column=1, sticky=W)
+        ).grid(row=row, column=1, sticky=W)
+        row += 1
 
-        ttkb.Label(container, text="Kontakt").grid(row=3, column=0, sticky=W, pady=5)
+        ttkb.Label(container, text="Kontakt").grid(row=row, column=0, sticky=W, pady=5)
         ttkb.Combobox(
             container,
             textvariable=self.kontakt_var,
             values=[row["name"] for row in self.contacts],
             state="readonly",
             width=32,
-        ).grid(row=3, column=1, sticky=W)
+        ).grid(row=row, column=1, sticky=W)
+        row += 1
 
-        ttkb.Label(container, text="Beschreibung").grid(row=4, column=0, sticky=tk.NW, pady=5)
-        self.beschreibung_text.grid(row=4, column=1, sticky=W)
+        ttkb.Label(container, text="Beschreibung").grid(row=row, column=0, sticky=tk.NW, pady=5)
+        self.beschreibung_text.grid(row=row, column=1, sticky=W)
+        row += 1
 
         attachments_frame = ttkb.Labelframe(container, text="Anhänge")
-        attachments_frame.grid(row=5, column=0, columnspan=2, pady=10, sticky=tk.EW)
+        attachments_frame.grid(row=row, column=0, columnspan=2, pady=10, sticky=tk.EW)
+        row += 1
 
         self.attachment_list = tk.Listbox(attachments_frame, width=55, height=4)
         self.attachment_list.pack(side=LEFT, padx=5, pady=5)
@@ -6481,7 +6653,7 @@ class RepairFormDialog(LargeDialog):
         )
 
         button_frame = ttkb.Frame(container)
-        button_frame.grid(row=6, column=0, columnspan=2, pady=(20, 0))
+        button_frame.grid(row=row, column=0, columnspan=2, pady=(20, 0))
         ttkb.Button(button_frame, text="Speichern", command=self.on_save, bootstyle="success").pack(
             side=LEFT, padx=5
         )

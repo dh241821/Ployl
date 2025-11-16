@@ -955,6 +955,29 @@ class DatabaseManager:
                     FOREIGN KEY(upload_kategorie_id) REFERENCES upload_kategorien(id) ON DELETE SET NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS komponenten_reparaturen (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    komponent_id INTEGER NOT NULL,
+                    datum TEXT NOT NULL,
+                    kosten REAL,
+                    kontakt_id INTEGER,
+                    beschreibung TEXT,
+                    reparatur_art_id INTEGER,
+                    FOREIGN KEY(komponent_id) REFERENCES produkt_komponenten(id) ON DELETE CASCADE,
+                    FOREIGN KEY(kontakt_id) REFERENCES kontakte(id),
+                    FOREIGN KEY(reparatur_art_id) REFERENCES reparatur_arten(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS komponenten_reparatur_dateien (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    komponenten_reparatur_id INTEGER NOT NULL,
+                    dateiname TEXT NOT NULL,
+                    speicherpfad TEXT NOT NULL,
+                    upload_kategorie_id INTEGER,
+                    FOREIGN KEY(komponenten_reparatur_id) REFERENCES komponenten_reparaturen(id) ON DELETE CASCADE,
+                    FOREIGN KEY(upload_kategorie_id) REFERENCES upload_kategorien(id) ON DELETE SET NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS wartungstypen (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL UNIQUE
@@ -3259,6 +3282,110 @@ class DatabaseManager:
                 ),
             )
             return int(cur.lastrowid)
+
+    def list_component_repairs(self, komponent_id: int) -> List[sqlite3.Row]:
+        try:
+            return list(
+                self.connection.execute(
+                    """
+                    SELECT cr.*, k.name AS kontakt_name, ra.name AS reparatur_art_name,
+                           COUNT(crd.id) AS attachment_count
+                    FROM komponenten_reparaturen AS cr
+                    LEFT JOIN kontakte AS k ON k.id = cr.kontakt_id
+                    LEFT JOIN reparatur_arten AS ra ON ra.id = cr.reparatur_art_id
+                    LEFT JOIN komponenten_reparatur_dateien AS crd
+                        ON crd.komponenten_reparatur_id = cr.id
+                    WHERE cr.komponent_id = ?
+                    GROUP BY cr.id
+                    ORDER BY cr.datum DESC, cr.id DESC
+                    """,
+                    (komponent_id,),
+                )
+            )
+        except sqlite3.Error as exc:  # pragma: no cover - defensive logging
+            self._log_internal_error("list_component_repairs failed", exc)
+            return []
+
+    def add_component_repair(
+        self,
+        *,
+        komponent_id: int,
+        datum: date,
+        kosten: Optional[float],
+        kontakt_id: Optional[int],
+        beschreibung: str,
+        reparatur_art_id: Optional[int],
+        benutzer_id: Optional[int] = None,
+    ) -> int:
+        datum_str = datum.isoformat()
+        with self.connection:
+            cur = self.connection.execute(
+                """
+                INSERT INTO komponenten_reparaturen (
+                    komponent_id, datum, kosten, kontakt_id, beschreibung, reparatur_art_id
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    komponent_id,
+                    datum_str,
+                    kosten,
+                    kontakt_id,
+                    beschreibung,
+                    reparatur_art_id,
+                ),
+            )
+        # status update + logging via existing helper
+        self.mark_component_in_repair(
+            komponent_id,
+            beschreibung=beschreibung,
+            datum=datum,
+            benutzer_id=benutzer_id,
+        )
+        return int(cur.lastrowid)
+
+    def add_component_repair_attachment(
+        self,
+        *,
+        komponenten_reparatur_id: int,
+        dateiname: str,
+        speicherpfad: str,
+        upload_kategorie_id: Optional[int],
+    ) -> int:
+        with self.connection:
+            cur = self.connection.execute(
+                """
+                INSERT INTO komponenten_reparatur_dateien (
+                    komponenten_reparatur_id, dateiname, speicherpfad, upload_kategorie_id
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    komponenten_reparatur_id,
+                    dateiname,
+                    speicherpfad,
+                    upload_kategorie_id,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_component_repair_attachments(
+        self, komponenten_reparatur_id: int
+    ) -> List[sqlite3.Row]:
+        try:
+            return list(
+                self.connection.execute(
+                    """
+                    SELECT crd.*, uk.name AS upload_kategorie_name
+                    FROM komponenten_reparatur_dateien AS crd
+                    LEFT JOIN upload_kategorien AS uk ON uk.id = crd.upload_kategorie_id
+                    WHERE crd.komponenten_reparatur_id = ?
+                    ORDER BY crd.id
+                    """,
+                    (komponenten_reparatur_id,),
+                )
+            )
+        except sqlite3.Error as exc:  # pragma: no cover - defensive logging
+            self._log_internal_error("list_component_repair_attachments failed", exc)
+            return []
 
     def list_repairs(self, produkt_id: int) -> List[sqlite3.Row]:
         return list(

@@ -50,6 +50,8 @@ Dieses Handbuch beschreibt die wichtigsten Arbeitsabläufe für Anwenderinnen un
 - Über den Arbeitsbereich **Komponenten** filterst du Teilkomponenten nach Name, Seriennummer, Standort oder Status.
 - Wähle eine Komponente aus und nutze die Buttons **Reparatur**, **Reparatur beendet**, **Ausscheiden** oder **Aktivieren**, um den Lebenszyklus zu pflegen.
 - Dieselben Aktionen stehen auch im Produkteditor im Reiter **Komponenten** zur Verfügung; alle Schritte werden automatisch im Produkt-Lebenslauf protokolliert.
+- Beim Melden einer Komponentenreparatur stehen dir nun Reparaturtyp, Kontakt, Kostenfeld sowie Datei-Uploads mit Kategorien genauso wie bei Produkten zur Verfügung.
+- Über **Reparaturen anzeigen** öffnest du die vollständige Komponentenhistorie inklusive Anhänge-Übersicht.
 
 ## 4. Fahrzeuge verwalten
 

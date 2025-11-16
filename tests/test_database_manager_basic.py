@@ -127,9 +127,19 @@ def test_component_status_flow(tmp_path):
         komponententyp_id=None,
     )
 
-    manager.mark_component_in_repair(component_id, beschreibung="Test", datum=date(2024, 5, 1))
+    repair_id = manager.add_component_repair(
+        komponent_id=component_id,
+        datum=date(2024, 5, 1),
+        kosten=125.0,
+        kontakt_id=None,
+        beschreibung="Werkstatt", 
+        reparatur_art_id=None,
+        benutzer_id=None,
+    )
     component = manager.get_component(component_id)
     assert component["status"] == "in_reparatur"
+    repairs = manager.list_component_repairs(component_id)
+    assert any(row["id"] == repair_id for row in repairs)
 
     manager.complete_component_repair(component_id)
     component = manager.get_component(component_id)

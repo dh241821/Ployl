@@ -20,6 +20,7 @@ Beim ersten Start wird automatisch ein Administrator-Account `admin` mit dem Pas
 
 - Der neue **Komponenten-Bereich** erlaubt die globale Suche über alle Produktkomponenten – inklusive Standort-, Fahrzeug- und Statusanzeige.
 - Aus dem Produkt-Editor und der Komponenten-Suche heraus lassen sich Komponenten direkt in Reparatur schicken, wieder aktivieren oder dauerhaft ausscheiden; sämtliche Aktionen landen automatisch im Produkt-Lebenslauf.
+- Die Reparaturformulare für Komponenten bieten nun dieselben Felder wie bei Produkten (Reparaturtyp, Kontakt, Kosten, Dateiuploads) und die neue Historie zeigt jede Komponenteninstandsetzung samt Anhängen an.
 
 ## Netzwerk & Web Cockpit
 
