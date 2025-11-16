@@ -45,6 +45,12 @@ Dieses Handbuch beschreibt die wichtigsten Arbeitsabläufe für Anwenderinnen un
 - Setze den Status auf **Ausgeschieden**. Das Produkt bleibt erhalten, wird aber standardmäßig ausgeblendet.
 - Aktiviere/Deaktiviere den Button **Ausgeschiedene anzeigen**, um archivierte Geräte einzublenden.
 
+### 3.5 Komponenten suchen & Status ändern
+
+- Über den Arbeitsbereich **Komponenten** filterst du Teilkomponenten nach Name, Seriennummer, Standort oder Status.
+- Wähle eine Komponente aus und nutze die Buttons **Reparatur**, **Reparatur beendet**, **Ausscheiden** oder **Aktivieren**, um den Lebenszyklus zu pflegen.
+- Dieselben Aktionen stehen auch im Produkteditor im Reiter **Komponenten** zur Verfügung; alle Schritte werden automatisch im Produkt-Lebenslauf protokolliert.
+
 ## 4. Fahrzeuge verwalten
 
 1. Tab **Fahrzeuge** → **Neues Fahrzeug**.

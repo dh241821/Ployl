@@ -16,6 +16,11 @@ python main_app.py
 
 Beim ersten Start wird automatisch ein Administrator-Account `admin` mit dem Passwort `admin` angelegt.
 
+## Komponenten-Workflows
+
+- Der neue **Komponenten-Bereich** erlaubt die globale Suche über alle Produktkomponenten – inklusive Standort-, Fahrzeug- und Statusanzeige.
+- Aus dem Produkt-Editor und der Komponenten-Suche heraus lassen sich Komponenten direkt in Reparatur schicken, wieder aktivieren oder dauerhaft ausscheiden; sämtliche Aktionen landen automatisch im Produkt-Lebenslauf.
+
 ## Netzwerk & Web Cockpit
 
 Das neue FastAPI-Backend ermöglicht Mehrbenutzerbetrieb mit PostgreSQL/MySQL sowie eine Progressive Web App mit QR-Workflows.

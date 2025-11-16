@@ -922,8 +922,14 @@ class DatabaseManager:
                     seriennummer TEXT,
                     anschaffungsdatum TEXT,
                     bemerkung TEXT,
-                     komponententyp_id INTEGER,
-                    FOREIGN KEY(produkt_id) REFERENCES produkte(id) ON DELETE CASCADE
+                    komponententyp_id INTEGER,
+                    status TEXT NOT NULL DEFAULT 'im_dienst',
+                    reparatur_notiz TEXT,
+                    reparatur_datum TEXT,
+                    ausscheidungsgrund TEXT,
+                    ausscheidungsdatum TEXT,
+                    FOREIGN KEY(produkt_id) REFERENCES produkte(id) ON DELETE CASCADE,
+                    FOREIGN KEY(komponententyp_id) REFERENCES komponententypen(id)
                 );
 
                 CREATE TABLE IF NOT EXISTS reparaturen (
@@ -1195,6 +1201,11 @@ class DatabaseManager:
         self._ensure_column("standorte", "funkkennung", "TEXT")
 
         self._ensure_column("produkt_komponenten", "komponententyp_id", "INTEGER REFERENCES komponententypen(id)")
+        self._ensure_column("produkt_komponenten", "status", "TEXT NOT NULL DEFAULT 'im_dienst'")
+        self._ensure_column("produkt_komponenten", "reparatur_notiz", "TEXT")
+        self._ensure_column("produkt_komponenten", "reparatur_datum", "TEXT")
+        self._ensure_column("produkt_komponenten", "ausscheidungsgrund", "TEXT")
+        self._ensure_column("produkt_komponenten", "ausscheidungsdatum", "TEXT")
         self._ensure_column("reparaturen", "reparatur_art_id", "INTEGER REFERENCES reparatur_arten(id)")
 
         self._ensure_column("produkt_log", "benutzer_id", "INTEGER REFERENCES benutzer(id)")
@@ -3165,18 +3176,37 @@ class DatabaseManager:
     # components and repairs
     # ------------------------------------------------------------------
     def list_components(self, produkt_id: int) -> List[sqlite3.Row]:
-        return list(
-            self.connection.execute(
-                """
-                SELECT pk.*, kt.name AS komponententyp_name
-                FROM produkt_komponenten AS pk
-                LEFT JOIN komponententypen AS kt ON kt.id = pk.komponententyp_id
-                WHERE pk.produkt_id = ?
-                ORDER BY pk.name
-                """,
-                (produkt_id,),
+        try:
+            return list(
+                self.connection.execute(
+                    """
+                    SELECT pk.*, kt.name AS komponententyp_name
+                    FROM produkt_komponenten AS pk
+                    LEFT JOIN komponententypen AS kt ON kt.id = pk.komponententyp_id
+                    WHERE pk.produkt_id = ?
+                    ORDER BY pk.name
+                    """,
+                    (produkt_id,),
+                )
             )
-        )
+        except sqlite3.Error as exc:  # pragma: no cover - defensive logging
+            self._log_internal_error("list_components failed", exc)
+            return []
+
+    def get_component(self, komponent_id: int) -> Optional[sqlite3.Row]:
+        try:
+            return self.connection.execute(
+                """
+                SELECT pk.*, p.name AS produkt_name
+                FROM produkt_komponenten AS pk
+                JOIN produkte AS p ON p.id = pk.produkt_id
+                WHERE pk.id = ? AND p.mandant_id = ?
+                """,
+                (komponent_id, self._active_mandant_id),
+            ).fetchone()
+        except sqlite3.Error as exc:  # pragma: no cover - defensive logging
+            self._log_internal_error("get_component failed", exc)
+            return None
 
     def add_or_update_component(
         self,
@@ -3289,6 +3319,151 @@ class DatabaseManager:
                 "DELETE FROM produkt_komponenten WHERE id = ?",
                 (komponent_id,),
             )
+
+    def search_components(
+        self,
+        term: str = "",
+        *,
+        status: Optional[str] = None,
+    ) -> List[sqlite3.Row]:
+        like = f"%{term.lower()}%"
+        query = [
+            """
+            SELECT pk.*, p.name AS produkt_name, p.seriennummer AS produkt_seriennummer,
+                   p.id AS produkt_id, p.status AS produkt_status, p.interne_kennung,
+                   p.standort_id, p.fahrzeug_id,
+                   s.bezeichnung AS standort_name, f.name AS fahrzeug_name,
+                   kt.name AS komponententyp_name
+            FROM produkt_komponenten AS pk
+            JOIN produkte AS p ON p.id = pk.produkt_id
+            LEFT JOIN standorte AS s ON s.id = p.standort_id
+            LEFT JOIN fahrzeuge AS f ON f.id = p.fahrzeug_id
+            LEFT JOIN komponententypen AS kt ON kt.id = pk.komponententyp_id
+            WHERE p.mandant_id = ?
+            """
+        ]
+        params: List[Any] = [self._active_mandant_id]
+        if term:
+            query.append(
+                "AND (LOWER(pk.name) LIKE ? OR LOWER(pk.seriennummer) LIKE ? OR LOWER(p.name) LIKE ? "
+                "OR LOWER(p.seriennummer) LIKE ? OR LOWER(s.bezeichnung) LIKE ?)"
+            )
+            params.extend([like, like, like, like, like])
+        if status:
+            query.append("AND pk.status = ?")
+            params.append(status)
+        query.append("ORDER BY pk.name COLLATE NOCASE")
+        sql = "\n".join(query)
+        try:
+            return list(self.connection.execute(sql, tuple(params)))
+        except sqlite3.Error as exc:  # pragma: no cover - defensive logging
+            self._log_internal_error("search_components failed", exc)
+            return []
+
+    def mark_component_in_repair(
+        self,
+        komponent_id: int,
+        *,
+        beschreibung: str = "",
+        datum: Optional[date] = None,
+        benutzer_id: Optional[int] = None,
+    ) -> None:
+        component = self.get_component(komponent_id)
+        if not component:
+            raise ValueError("Komponente nicht gefunden")
+        datum_str = datum.isoformat() if datum else None
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE produkt_komponenten
+                SET status = 'in_reparatur', reparatur_notiz = ?, reparatur_datum = ?,
+                    ausscheidungsgrund = NULL, ausscheidungsdatum = NULL
+                WHERE id = ?
+                """,
+                (beschreibung or None, datum_str, komponent_id),
+            )
+        self.add_product_log(
+            int(component["produkt_id"]),
+            "komponente_reparatur",
+            f"{component['name']} in Reparatur: {beschreibung or 'ohne Beschreibung'}",
+            benutzer_id=benutzer_id,
+        )
+
+    def complete_component_repair(
+        self,
+        komponent_id: int,
+        *,
+        benutzer_id: Optional[int] = None,
+    ) -> None:
+        component = self.get_component(komponent_id)
+        if not component:
+            raise ValueError("Komponente nicht gefunden")
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE produkt_komponenten
+                SET status = 'im_dienst', reparatur_notiz = NULL, reparatur_datum = NULL
+                WHERE id = ?
+                """,
+                (komponent_id,),
+            )
+        self.add_product_log(
+            int(component["produkt_id"]),
+            "komponente_reparatur_abgeschlossen",
+            f"{component['name']} wieder im Dienst",
+            benutzer_id=benutzer_id,
+        )
+
+    def retire_component(
+        self,
+        komponent_id: int,
+        *,
+        datum: Optional[date],
+        grund: str,
+        benutzer_id: Optional[int] = None,
+    ) -> None:
+        component = self.get_component(komponent_id)
+        if not component:
+            raise ValueError("Komponente nicht gefunden")
+        datum_str = datum.isoformat() if datum else None
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE produkt_komponenten
+                SET status = 'ausgeschieden', ausscheidungsdatum = ?, ausscheidungsgrund = ?,
+                    reparatur_notiz = NULL, reparatur_datum = NULL
+                WHERE id = ?
+                """,
+                (datum_str, grund or None, komponent_id),
+            )
+        beschreibung = grund or "Komponente ausgeschieden"
+        self.add_product_log(
+            int(component["produkt_id"]),
+            "komponente_ausgeschieden",
+            f"{component['name']} ausgeschieden: {beschreibung}",
+            benutzer_id=benutzer_id,
+        )
+
+    def reactivate_component(self, komponent_id: int, *, benutzer_id: Optional[int] = None) -> None:
+        component = self.get_component(komponent_id)
+        if not component:
+            raise ValueError("Komponente nicht gefunden")
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE produkt_komponenten
+                SET status = 'im_dienst', reparatur_notiz = NULL, reparatur_datum = NULL,
+                    ausscheidungsgrund = NULL, ausscheidungsdatum = NULL
+                WHERE id = ?
+                """,
+                (komponent_id,),
+            )
+        self.add_product_log(
+            int(component["produkt_id"]),
+            "komponente_reaktiviert",
+            f"{component['name']} wieder aktiv",
+            benutzer_id=benutzer_id,
+        )
 
     def add_repair_attachment(
         self,

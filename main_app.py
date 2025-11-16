@@ -9,7 +9,7 @@ import textwrap
 import webbrowser
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import shutil
 import sqlite3
@@ -1237,6 +1237,218 @@ class ProductsView(ttkb.Frame):
         path = build_report_path("wartungen", ".ics")
         path.write_text(ics_data, encoding="utf-8")
         notify_report_saved(path)
+
+
+class ComponentSearchView(ttkb.Frame):
+    def __init__(
+        self,
+        master: tk.Misc,
+        db: DatabaseManager,
+        *,
+        user: Optional[User] = None,
+    ) -> None:
+        super().__init__(master)
+        self.db = db
+        self.user = user
+        self.write_allowed = True
+        self.row_cache: Dict[int, sqlite3.Row] = {}
+
+        toolbar = ttkb.Frame(self)
+        toolbar.pack(fill=tk.X, padx=10, pady=10)
+
+        ttkb.Label(toolbar, text="Suche").pack(side=LEFT)
+        self.search_var = ttkb.StringVar()
+        search_entry = ttkb.Entry(toolbar, textvariable=self.search_var, width=30)
+        search_entry.pack(side=LEFT, padx=5)
+        search_entry.bind("<Return>", lambda _event: self.refresh())
+        ttkb.Button(toolbar, text="Aktualisieren", command=self.refresh, bootstyle="secondary").pack(side=LEFT)
+
+        ttkb.Label(toolbar, text="Status").pack(side=LEFT, padx=(16, 4))
+        self.status_var = ttkb.StringVar(value="Alle")
+        status_values = ["Alle"] + [label for label, _ in STATUS_OPTIONS]
+        self.status_box = ttkb.Combobox(toolbar, textvariable=self.status_var, values=status_values, width=20)
+        self.status_box.pack(side=LEFT)
+        self.status_box.bind("<<ComboboxSelected>>", lambda _event: self.refresh())
+
+        self.repair_button = ttkb.Button(toolbar, text="Reparatur", command=self.send_to_repair, bootstyle="warning")
+        self.repair_button.pack(side=LEFT, padx=(20, 5))
+        self.repair_done_button = ttkb.Button(
+            toolbar, text="Reparatur beendet", command=self.complete_repair, bootstyle="success"
+        )
+        self.repair_done_button.pack(side=LEFT, padx=5)
+        self.retire_button = ttkb.Button(toolbar, text="Ausscheiden", command=self.retire_component, bootstyle="danger")
+        self.retire_button.pack(side=LEFT, padx=5)
+        self.activate_button = ttkb.Button(
+            toolbar, text="Aktivieren", command=self.reactivate_component, bootstyle="secondary"
+        )
+        self.activate_button.pack(side=LEFT, padx=5)
+        self.action_buttons = [
+            self.repair_button,
+            self.repair_done_button,
+            self.retire_button,
+            self.activate_button,
+        ]
+
+        columns = [
+            {"text": "ID"},
+            {"text": "Komponente"},
+            {"text": "Status"},
+            {"text": "Typ"},
+            {"text": "Seriennummer"},
+            {"text": "Produkt"},
+            {"text": "Geräte-SN"},
+            {"text": "Fahrzeug"},
+            {"text": "Standort"},
+        ]
+        self.table = Tableview(self, coldata=columns, rowdata=[], pagesize=18)
+        self.table.pack(fill=BOTH, expand=True, padx=10, pady=(0, 10))
+
+        self.info_label = ttkb.Label(self, text="", bootstyle="secondary", anchor=W)
+        self.info_label.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+    def set_user(self, user: Optional[User]) -> None:
+        self.user = user
+
+    def set_write_permissions(self, allowed: bool) -> None:
+        self.write_allowed = allowed
+        state = tk.NORMAL if allowed else tk.DISABLED
+        for button in self.action_buttons:
+            button.configure(state=state)
+
+    def _current_user_id(self) -> Optional[int]:
+        return self.user.id if self.user else None
+
+    def refresh(self) -> None:
+        status_label = self.status_var.get()
+        status_value = STATUS_LABEL_TO_VALUE.get(status_label)
+        rows = self.db.search_components(term=self.search_var.get().strip(), status=status_value)
+        allowed_locations: Optional[Set[int]] = None
+        if self.user and self.user.location_permissions:
+            allowed_locations = {
+                loc_id
+                for loc_id, perm in self.user.location_permissions.items()
+                if perm.lesen
+            }
+        self.table.delete_rows()
+        self.row_cache = {}
+        visible = 0
+        for row in rows:
+            standort_id = safe_row_get(row, "standort_id")
+            if allowed_locations is not None and standort_id is not None and standort_id not in allowed_locations:
+                continue
+            component_id = int(row["id"])
+            self.row_cache[component_id] = row
+            visible += 1
+            self.table.insert_row(
+                values=(
+                    component_id,
+                    row["name"],
+                    display_status(row["status"]),
+                    row["komponententyp_name"] or "",
+                    row["seriennummer"] or "",
+                    row["produkt_name"] or "",
+                    row["produkt_seriennummer"] or "",
+                    row["fahrzeug_name"] or "",
+                    row["standort_name"] or "",
+                )
+            )
+        self.info_label.configure(text=f"{visible} Komponenten gefunden")
+
+    def _ensure_write(self) -> bool:
+        if not self.write_allowed:
+            Messagebox.show_error("Keine Berechtigung zum Bearbeiten von Komponenten.", "Berechtigung")
+            return False
+        return True
+
+    def _selected_component(self) -> Optional[Tuple[int, sqlite3.Row]]:
+        rows = self.table.get_rows("selected")
+        if not rows:
+            Messagebox.show_info("Bitte Komponente auswählen", "Hinweis")
+            return None
+        component_id = int(rows[0].values[0])
+        row = self.row_cache.get(component_id)
+        if not row:
+            Messagebox.show_info("Komponente nicht gefunden", "Hinweis")
+            return None
+        return component_id, row
+
+    def send_to_repair(self) -> None:
+        if not self._ensure_write():
+            return
+        selection = self._selected_component()
+        if not selection:
+            return
+        component_id, row = selection
+        dialog = ComponentRepairDialog(self, component_name=row["name"])
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        self.db.mark_component_in_repair(
+            component_id,
+            beschreibung=dialog.result["beschreibung"],
+            datum=dialog.result["datum"],
+            benutzer_id=self._current_user_id(),
+        )
+        self.refresh()
+
+    def complete_repair(self) -> None:
+        if not self._ensure_write():
+            return
+        selection = self._selected_component()
+        if not selection:
+            return
+        component_id, row = selection
+        if row["status"] != "in_reparatur":
+            if Messagebox.okcancel(
+                "Komponente ist nicht als 'In Reparatur' markiert. Trotzdem zurücksetzen?",
+                "Status aktualisieren",
+            ) != "OK":
+                return
+        self.db.complete_component_repair(
+            component_id,
+            benutzer_id=self._current_user_id(),
+        )
+        self.refresh()
+
+    def retire_component(self) -> None:
+        if not self._ensure_write():
+            return
+        selection = self._selected_component()
+        if not selection:
+            return
+        component_id, row = selection
+        reasons = [entry["name"] for entry in self.db.list_retirement_reasons()]
+        dialog = ComponentRetireDialog(self, component_name=row["name"], reasons=reasons)
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        self.db.retire_component(
+            component_id,
+            datum=dialog.result["datum"],
+            grund=dialog.result["grund"],
+            benutzer_id=self._current_user_id(),
+        )
+        self.refresh()
+
+    def reactivate_component(self) -> None:
+        if not self._ensure_write():
+            return
+        selection = self._selected_component()
+        if not selection:
+            return
+        component_id, row = selection
+        if row["status"] == "im_dienst":
+            Messagebox.show_info("Komponente ist bereits aktiv", "Hinweis")
+            return
+        if Messagebox.okcancel(
+            "Komponente wieder aktivieren?", "Bestätigung", alert=row["status"] == "ausgeschieden"
+        ) != "OK":
+            return
+        self.db.reactivate_component(
+            component_id,
+            benutzer_id=self._current_user_id(),
+        )
+        self.refresh()
 
 
 class VehiclesView(ttkb.Frame):
@@ -4453,7 +4665,7 @@ class ProductEditor(LargeDialog):
         self._build_details(self.details_frame)
 
         self.components_tab = ComponentsTab(
-            self.notebook, self.db, self.produkt_id, self.component_types
+            self.notebook, self.db, self.produkt_id, self.component_types, user=self.user
         )
         self.notebook.add(self.components_tab, text="Komponenten")
 
@@ -5104,11 +5316,14 @@ class ComponentsTab(ttkb.Frame):
         db: DatabaseManager,
         produkt_id: Optional[int],
         component_types: List[sqlite3.Row],
+        *,
+        user: Optional[User] = None,
     ) -> None:
         super().__init__(master)
         self.db = db
         self.produkt_id = produkt_id
         self.component_types = component_types
+        self.user = user
         self.component_cache: Dict[int, sqlite3.Row] = {}
         self.pending_components: List[Dict[str, Any]] = []
         self.pending_cache: Dict[str, Dict[str, Any]] = {}
@@ -5128,11 +5343,34 @@ class ComponentsTab(ttkb.Frame):
             self.toolbar, text="Entfernen", command=self.delete_component, bootstyle="danger"
         )
         self.delete_btn.pack(side=LEFT)
+        self.repair_btn = ttkb.Button(
+            self.toolbar, text="Reparatur", command=self.send_to_repair, bootstyle="warning"
+        )
+        self.repair_btn.pack(side=LEFT, padx=(20, 5))
+        self.repair_done_btn = ttkb.Button(
+            self.toolbar,
+            text="Reparatur beendet",
+            command=self.complete_repair,
+            bootstyle="success",
+        )
+        self.repair_done_btn.pack(side=LEFT, padx=5)
+        self.retire_btn = ttkb.Button(
+            self.toolbar, text="Ausscheiden", command=self.retire_component, bootstyle="danger"
+        )
+        self.retire_btn.pack(side=LEFT, padx=5)
+        self.reactivate_btn = ttkb.Button(
+            self.toolbar,
+            text="Aktivieren",
+            command=self.reactivate_component,
+            bootstyle="secondary",
+        )
+        self.reactivate_btn.pack(side=LEFT, padx=5)
 
         columns = [
             {"text": "Kennung"},
             {"text": "Bezeichnung"},
             {"text": "Typ"},
+            {"text": "Status"},
             {"text": "Seriennummer"},
             {"text": "Bemerkung"},
         ]
@@ -5152,6 +5390,9 @@ class ComponentsTab(ttkb.Frame):
     def _update_state(self) -> None:
         for button in (self.add_btn, self.edit_btn, self.delete_btn):
             button.configure(state=tk.NORMAL)
+        manage_state = tk.NORMAL if self.produkt_id else tk.DISABLED
+        for button in (self.repair_btn, self.repair_done_btn, self.retire_btn, self.reactivate_btn):
+            button.configure(state=manage_state)
         if self.produkt_id:
             self.info_label.configure(text="")
             self.refresh()
@@ -5173,6 +5414,7 @@ class ComponentsTab(ttkb.Frame):
                     str(row["id"]),
                     row["name"],
                     row["komponententyp_name"] or "",
+                    display_status(row["status"]),
                     row["seriennummer"] or "",
                     row["bemerkung"] or "",
                 )
@@ -5189,6 +5431,7 @@ class ComponentsTab(ttkb.Frame):
                     key,
                     record.get("name", ""),
                     record.get("komponententyp_name", ""),
+                    record.get("status", ""),
                     record.get("seriennummer", ""),
                     record.get("bemerkung", ""),
                 )
@@ -5200,6 +5443,23 @@ class ComponentsTab(ttkb.Frame):
             Messagebox.show_info("Bitte Komponente auswählen", "Hinweis")
             return None
         return str(rows[0].values[0])
+
+    def _selected_existing_component(self) -> Optional[Tuple[int, sqlite3.Row]]:
+        key = self.selected_component_key()
+        if not key:
+            return None
+        if key.startswith("neu-"):
+            Messagebox.show_info(
+                "Die Komponente muss zuerst gespeichert werden.",
+                "Hinweis",
+            )
+            return None
+        component_id = int(key)
+        row = self.component_cache.get(component_id)
+        if not row:
+            Messagebox.show_info("Komponente nicht gefunden", "Hinweis")
+            return None
+        return component_id, row
 
     def _resolve_component_type_name(self, type_id: Optional[int]) -> str:
         if not type_id:
@@ -5322,6 +5582,76 @@ class ComponentsTab(ttkb.Frame):
         self.pending_components.clear()
         self.pending_cache = {}
 
+    def send_to_repair(self) -> None:
+        selection = self._selected_existing_component()
+        if not selection:
+            return
+        component_id, row = selection
+        dialog = ComponentRepairDialog(self, component_name=row["name"])
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        self.db.mark_component_in_repair(
+            component_id,
+            beschreibung=dialog.result["beschreibung"],
+            datum=dialog.result["datum"],
+            benutzer_id=self.user.id if self.user else None,
+        )
+        self.refresh()
+
+    def complete_repair(self) -> None:
+        selection = self._selected_existing_component()
+        if not selection:
+            return
+        component_id, row = selection
+        if row["status"] != "in_reparatur":
+            if Messagebox.okcancel(
+                "Diese Komponente ist nicht als 'In Reparatur' markiert. Trotzdem fortfahren?",
+                "Status ändern",
+            ) != "OK":
+                return
+        self.db.complete_component_repair(
+            component_id,
+            benutzer_id=self.user.id if self.user else None,
+        )
+        self.refresh()
+
+    def retire_component(self) -> None:
+        selection = self._selected_existing_component()
+        if not selection:
+            return
+        component_id, row = selection
+        reasons = [entry["name"] for entry in self.db.list_retirement_reasons()]
+        dialog = ComponentRetireDialog(self, component_name=row["name"], reasons=reasons)
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        self.db.retire_component(
+            component_id,
+            datum=dialog.result["datum"],
+            grund=dialog.result["grund"],
+            benutzer_id=self.user.id if self.user else None,
+        )
+        self.refresh()
+
+    def reactivate_component(self) -> None:
+        selection = self._selected_existing_component()
+        if not selection:
+            return
+        component_id, row = selection
+        if row["status"] == "im_dienst":
+            Messagebox.show_info("Komponente ist bereits aktiv", "Hinweis")
+            return
+        if Messagebox.okcancel(
+            "Komponente wieder aktivieren?", "Bestätigung", alert=row["status"] == "ausgeschieden"
+        ) != "OK":
+            return
+        self.db.reactivate_component(
+            component_id,
+            benutzer_id=self.user.id if self.user else None,
+        )
+        self.refresh()
+
 
 class ComponentFormDialog(LargeDialog):
     def __init__(
@@ -5422,6 +5752,116 @@ class ComponentFormDialog(LargeDialog):
             "bemerkung": self.bemerkung_var.get().strip(),
             "komponententyp_id": komponententyp_id,
         }
+        self.destroy()
+
+
+class ComponentRepairDialog(LargeDialog):
+    def __init__(self, master: tk.Misc, *, component_name: str) -> None:
+        super().__init__(master, min_width=420, min_height=260)
+        self.title("Komponente in Reparatur")
+        self.result: Optional[Dict[str, Any]] = None
+
+        container = ttkb.Frame(self, padding=20)
+        container.pack(fill=BOTH, expand=True)
+
+        ttkb.Label(
+            container,
+            text=f"Komponente: {component_name}",
+            font=("Inter", 11, "bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 10))
+
+        self.date_var = ttkb.StringVar(value=date.today().strftime(DATE_FORMAT))
+        ttkb.Label(container, text="Reparaturdatum").grid(row=1, column=0, sticky=W, pady=5)
+        self.date_entry = DateEntry(container, dateformat=DATE_FORMAT, width=18)
+        self.date_entry.grid(row=1, column=1, sticky=W)
+        bind_date_entry(self.date_entry, self.date_var)
+
+        self.note_var = ttkb.StringVar()
+        ttkb.Label(container, text="Beschreibung").grid(row=2, column=0, sticky=W, pady=5)
+        ttkb.Entry(container, textvariable=self.note_var, width=42).grid(row=2, column=1, sticky=W)
+
+        button_frame = ttkb.Frame(container)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=(20, 0))
+        ttkb.Button(button_frame, text="Speichern", command=self.on_save, bootstyle="success").pack(
+            side=LEFT, padx=5
+        )
+        ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(side=LEFT)
+
+        self.grab_set()
+
+    def on_save(self) -> None:
+        try:
+            datum = parse_date(self.date_var.get())
+        except ValueError:
+            Messagebox.show_error("Ungültiges Datum", "Fehler")
+            return
+        self.result = {
+            "datum": datum or date.today(),
+            "beschreibung": self.note_var.get().strip(),
+        }
+        self.destroy()
+
+
+class ComponentRetireDialog(LargeDialog):
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        component_name: str,
+        reasons: Optional[List[str]] = None,
+    ) -> None:
+        super().__init__(master, min_width=420, min_height=280)
+        self.title("Komponente ausscheiden")
+        self.result: Optional[Dict[str, Any]] = None
+        reasons = reasons or []
+
+        container = ttkb.Frame(self, padding=20)
+        container.pack(fill=BOTH, expand=True)
+
+        ttkb.Label(
+            container,
+            text=f"Komponente: {component_name}",
+            font=("Inter", 11, "bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 10))
+
+        self.date_var = ttkb.StringVar(value=date.today().strftime(DATE_FORMAT))
+        ttkb.Label(container, text="Datum").grid(row=1, column=0, sticky=W, pady=5)
+        self.date_entry = DateEntry(container, dateformat=DATE_FORMAT, width=18)
+        self.date_entry.grid(row=1, column=1, sticky=W)
+        bind_date_entry(self.date_entry, self.date_var)
+
+        self.reason_var = ttkb.StringVar(value=reasons[0] if reasons else "")
+        ttkb.Label(container, text="Grund").grid(row=2, column=0, sticky=W, pady=5)
+        self.reason_box = ttkb.Combobox(container, textvariable=self.reason_var, values=reasons, width=40)
+        self.reason_box.grid(row=2, column=1, sticky=W)
+
+        self.note_var = ttkb.StringVar()
+        ttkb.Label(container, text="Bemerkung").grid(row=3, column=0, sticky=W, pady=5)
+        ttkb.Entry(container, textvariable=self.note_var, width=40).grid(row=3, column=1, sticky=W)
+
+        button_frame = ttkb.Frame(container)
+        button_frame.grid(row=4, column=0, columnspan=2, pady=(20, 0))
+        ttkb.Button(button_frame, text="Speichern", command=self.on_save, bootstyle="danger").pack(
+            side=LEFT, padx=5
+        )
+        ttkb.Button(button_frame, text="Abbrechen", command=self.destroy, bootstyle="secondary").pack(side=LEFT)
+
+        self.grab_set()
+
+    def on_save(self) -> None:
+        try:
+            datum = parse_date(self.date_var.get())
+        except ValueError:
+            Messagebox.show_error("Ungültiges Datum", "Fehler")
+            return
+        grund = self.reason_var.get().strip()
+        if not grund:
+            Messagebox.show_error("Bitte einen Grund angeben", "Fehler")
+            return
+        bemerkung = self.note_var.get().strip()
+        if bemerkung:
+            grund = f"{grund} – {bemerkung}"
+        self.result = {"datum": datum or date.today(), "grund": grund}
         self.destroy()
 
 
@@ -7055,6 +7495,7 @@ class MedizinprodukteApp(ttkb.Window):
         self.font_scale = 1.0
         self.show_welcome_info = True
         self.products_view: Optional[ProductsView] = None
+        self.component_search_view: Optional[ComponentSearchView] = None
         self.vehicles_view: Optional[VehiclesView] = None
         self.materials_view: Optional[MaterialsView] = None
         self.views: List[ttkb.Frame] = []
@@ -7126,6 +7567,13 @@ class MedizinprodukteApp(ttkb.Window):
             self._register_view("products", "Produkte", "🗂️  Produkte", self.products_view)
         else:
             self.products_view = None
+
+        if self.user and self.user.can_read("produkte"):
+            self.component_search_view = ComponentSearchView(self.view_container, self.db, user=self.user)
+            self.component_search_view.set_write_permissions(self.user.can_write("produkte"))
+            self._register_view("components", "Komponenten", "🔧  Komponenten", self.component_search_view)
+        else:
+            self.component_search_view = None
 
         if self.user and self.user.can_read("fahrzeuge"):
             self.vehicles_view = VehiclesView(self.view_container, self.db)
