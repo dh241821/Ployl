@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import contextlib
-import hashlib
 import io
 import json
 import logging
@@ -28,6 +27,11 @@ from app.auth import (
     User,
 )
 from app.config import get_db_path
+from app.security import hash_password, verify_password
+from app.services import (
+    ValidationError as ProductValidationError,
+    validate_product,
+)
 
 STATUS_LABELS: Dict[str, str] = {
     "im_dienst": "Im Dienst",
@@ -1517,7 +1521,7 @@ class DatabaseManager:
             count = self.connection.execute("SELECT COUNT(*) FROM benutzer").fetchone()[0]
             if count:
                 return
-            password_hash = self.hash_password("admin")
+            password_hash = hash_password("admin")
             columns_sql = ", ".join(PERMISSION_COLUMNS)
             placeholders = ", ".join(["?"] * len(PERMISSION_COLUMNS))
             admin_preset = ROLE_PERMISSION_PRESETS.get("admin", PERMISSION_DEFAULTS)
@@ -1556,10 +1560,6 @@ class DatabaseManager:
     # helpers
     # ------------------------------------------------------------------
     @staticmethod
-    def hash_password(password: str) -> str:
-        return hashlib.sha256(password.encode("utf-8")).hexdigest()
-
-    @staticmethod
     def _parse_date(value: Optional[str]) -> Optional[date]:
         if not value:
             return None
@@ -1596,7 +1596,7 @@ class DatabaseManager:
             ).fetchone()
         if not row:
             return None
-        if row["password_hash"] != self.hash_password(password):
+        if not verify_password(password, row["password_hash"]):
             return None
         permission_kwargs = {column: bool(row[column]) for column in PERMISSION_COLUMNS}
         location_entries = self.list_user_location_permissions(row["id"])
@@ -2562,33 +2562,39 @@ class DatabaseManager:
         informationstext: str,
         user_id: Optional[int] = None,
     ) -> int:
+        payload = {
+            "produkt_id": produkt_id,
+            "name": name,
+            "typ": typ,
+            "seriennummer": seriennummer,
+            "hersteller": hersteller,
+            "anschaffungsdatum": anschaffungsdatum,
+            "kategorie_id": kategorie_id,
+            "standort_id": standort_id,
+            "fahrzeug_id": fahrzeug_id,
+            "status": status,
+            "interne_kennung": interne_kennung,
+            "stk_intervall": stk_intervall,
+            "mtk_intervall": mtk_intervall,
+            "stk_aktiv": stk_aktiv,
+            "mtk_aktiv": mtk_aktiv,
+            "letzte_stk": letzte_stk,
+            "letzte_mtk": letzte_mtk,
+            "naechste_stk": naechste_stk,
+            "naechste_mtk": naechste_mtk,
+            "lagerort": lagerort,
+            "produkt_typ_id": produkt_typ_id,
+            "produkt_modell_id": produkt_modell_id,
+            "produkt_hersteller_id": produkt_hersteller_id,
+            "informationstext": informationstext,
+            "user_id": user_id,
+        }
+        errors = validate_product(payload, db=self)
+        if errors:
+            raise ProductValidationError(errors)
         try:
             return self._add_or_update_product_impl(
-                produkt_id=produkt_id,
-                name=name,
-                typ=typ,
-                seriennummer=seriennummer,
-                hersteller=hersteller,
-                anschaffungsdatum=anschaffungsdatum,
-                kategorie_id=kategorie_id,
-                standort_id=standort_id,
-                fahrzeug_id=fahrzeug_id,
-                status=status,
-                interne_kennung=interne_kennung,
-                stk_intervall=stk_intervall,
-                mtk_intervall=mtk_intervall,
-                stk_aktiv=stk_aktiv,
-                mtk_aktiv=mtk_aktiv,
-                letzte_stk=letzte_stk,
-                letzte_mtk=letzte_mtk,
-                naechste_stk=naechste_stk,
-                naechste_mtk=naechste_mtk,
-                lagerort=lagerort,
-                produkt_typ_id=produkt_typ_id,
-                produkt_modell_id=produkt_modell_id,
-                produkt_hersteller_id=produkt_hersteller_id,
-                informationstext=informationstext,
-                user_id=user_id,
+                **payload,
             )
         except sqlite3.Error as exc:
             self._log_internal_error("add_or_update_product failed", exc)
@@ -3568,7 +3574,7 @@ class DatabaseManager:
                     """,
                     (
                         username,
-                        self.hash_password(dienstnummer),
+                        hash_password(dienstnummer),
                         full_name or username,
                         rolle,
                         vorname,
@@ -3589,7 +3595,7 @@ class DatabaseManager:
         with self.connection:
             self.connection.execute(
                 "UPDATE benutzer SET password_hash = ? WHERE id = ?",
-                (self.hash_password(password), benutzer_id),
+                (hash_password(password), benutzer_id),
             )
 
     def delete_user(self, benutzer_id: int) -> None:

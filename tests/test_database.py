@@ -17,6 +17,15 @@ def test_governance_features(tmp_path):
     manager = DatabaseManager(db_path)
     manager.set_active_mandant(1)
 
+    location_id = manager.add_location(
+        "Österreich",
+        "Waldviertel",
+        "Horn",
+        "Horn",
+        "Horn",
+        "Test Standort",
+    )
+
     product_id = manager.add_or_update_product(
         produkt_id=None,
         name="Testgerät",
@@ -25,7 +34,7 @@ def test_governance_features(tmp_path):
         hersteller="Acme",
         anschaffungsdatum=None,
         kategorie_id=None,
-        standort_id=None,
+        standort_id=location_id,
         fahrzeug_id=None,
         status="im_dienst",
         interne_kennung="IK-1",
