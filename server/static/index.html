@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Medizinprodukte Cockpit</title>
+    <link rel="manifest" href="/static/manifest.json" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/modern-css-reset/dist/reset.min.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.10/html5-qrcode.min.js"></script>
+    <script defer src="/static/pwa.js"></script>
+    <style>
+      :root {
+        font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        color-scheme: light dark;
+        --bg-light: #f3f4ff;
+        --bg-dark: #020617;
+        --card-light: rgba(255, 255, 255, 0.88);
+        --card-dark: rgba(15, 23, 42, 0.78);
+        --stroke-light: rgba(120, 126, 186, 0.25);
+        --stroke-dark: rgba(76, 86, 127, 0.45);
+        --text-muted: rgba(71, 85, 105, 0.8);
+        --text-muted-dark: rgba(148, 163, 184, 0.82);
+        --accent-start: #6366f1;
+        --accent-end: #a855f7;
+        --accent-glow: rgba(99, 102, 241, 0.45);
+      }
+
+      body {
+        position: relative;
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        padding: 3.5rem 1.25rem 4rem;
+        background: radial-gradient(circle at 20% -10%, #c7d2fe 0%, transparent 45%),
+          radial-gradient(circle at 80% 0%, #fde68a 0%, transparent 40%),
+          linear-gradient(135deg, #eef2ff 0%, var(--bg-light) 40%, #fff 100%);
+        transition: background 0.4s ease, color 0.4s ease;
+        overflow-x: hidden;
+      }
+
+      body::before,
+      body::after {
+        content: '';
+        position: absolute;
+        width: 460px;
+        height: 460px;
+        border-radius: 50%;
+        filter: blur(120px);
+        opacity: 0.55;
+        z-index: -1;
+        transition: opacity 0.4s ease;
+      }
+
+      body::before {
+        top: -140px;
+        left: -160px;
+        background: radial-gradient(circle, rgba(99, 102, 241, 0.55), transparent 70%);
+      }
+
+      body::after {
+        bottom: -160px;
+        right: -120px;
+        background: radial-gradient(circle, rgba(244, 114, 182, 0.55), transparent 70%);
+      }
+
+      body[data-theme='dark'] {
+        color: #e2e8f0;
+        background: radial-gradient(circle at 20% -10%, rgba(59, 130, 246, 0.18) 0%, transparent 45%),
+          radial-gradient(circle at 80% 10%, rgba(244, 114, 182, 0.14) 0%, transparent 45%),
+          linear-gradient(135deg, #0b1220 0%, #020617 50%, #000 100%);
+      }
+
+      body[data-theme='dark']::before,
+      body[data-theme='dark']::after {
+        opacity: 0.3;
+      }
+
+      .app-shell {
+        width: min(1100px, 100%);
+        display: grid;
+        gap: 2.75rem;
+      }
+
+      header {
+        position: relative;
+        display: grid;
+        gap: 1.5rem;
+        background: var(--card-light);
+        backdrop-filter: blur(18px);
+        border-radius: 28px;
+        padding: 2.75rem;
+        box-shadow: 0 30px 80px -45px rgba(30, 64, 175, 0.55);
+        border: 1px solid var(--stroke-light);
+        overflow: hidden;
+        transition: background 0.4s ease, border-color 0.4s ease;
+      }
+
+      header::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(120deg, rgba(99, 102, 241, 0.12), transparent 55%);
+        pointer-events: none;
+      }
+
+      body[data-theme='dark'] header {
+        background: var(--card-dark);
+        border-color: var(--stroke-dark);
+        box-shadow: 0 25px 70px -45px rgba(15, 23, 42, 0.85);
+      }
+
+      body[data-theme='dark'] header::after {
+        background: linear-gradient(120deg, rgba(99, 102, 241, 0.18), transparent 55%);
+      }
+
+      h1 {
+        font-size: clamp(2.25rem, 2vw + 1.75rem, 3.25rem);
+        margin: 0;
+        letter-spacing: -0.02em;
+      }
+
+      header p {
+        font-size: 1.06rem;
+        max-width: 58ch;
+        color: var(--text-muted);
+        line-height: 1.7;
+      }
+
+      body[data-theme='dark'] header p {
+        color: var(--text-muted-dark);
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.85rem;
+        margin-top: 0.5rem;
+      }
+
+      .toolbar button {
+        border-radius: 14px;
+        padding: 0.65rem 1.15rem;
+        font-weight: 600;
+        border: none;
+        background: linear-gradient(135deg, var(--accent-start), var(--accent-end));
+        color: #fff;
+        cursor: pointer;
+        transition: transform 0.25s ease, box-shadow 0.25s ease;
+        box-shadow: 0 22px 35px -22px var(--accent-glow);
+      }
+
+      .toolbar button[hidden] {
+        display: none;
+      }
+
+      .toolbar button.secondary {
+        background: rgba(99, 102, 241, 0.14);
+        color: #1f2937;
+        border: 1px solid rgba(99, 102, 241, 0.3);
+        box-shadow: none;
+      }
+
+      .toolbar button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 26px 38px -28px var(--accent-glow);
+      }
+
+      .toolbar button.secondary:hover {
+        background: rgba(99, 102, 241, 0.22);
+      }
+
+      body[data-theme='dark'] .toolbar button.secondary {
+        background: rgba(148, 163, 184, 0.14);
+        color: inherit;
+        border-color: rgba(148, 163, 184, 0.32);
+      }
+
+      body[data-theme='dark'] .toolbar button.secondary:hover {
+        background: rgba(148, 163, 184, 0.22);
+      }
+
+      #offline-indicator {
+        font-size: 0.95rem;
+        padding: 0.42rem 1.1rem;
+        border-radius: 999px;
+        background: rgba(226, 232, 240, 0.65);
+        color: #0f172a;
+        border: 1px solid rgba(148, 163, 184, 0.45);
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+      }
+
+      body[data-theme='dark'] #offline-indicator {
+        background: rgba(30, 41, 59, 0.75);
+        color: #e2e8f0;
+        border-color: rgba(71, 85, 105, 0.65);
+        box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.12);
+      }
+
+      section {
+        background: var(--card-light);
+        backdrop-filter: blur(16px);
+        border-radius: 24px;
+        padding: 2.25rem;
+        box-shadow: 0 28px 70px -46px rgba(30, 64, 175, 0.4);
+        border: 1px solid var(--stroke-light);
+        transition: transform 0.25s ease, border-color 0.35s ease, background 0.35s ease;
+      }
+
+      section:hover {
+        transform: translateY(-6px);
+      }
+
+      body[data-theme='dark'] section {
+        background: var(--card-dark);
+        border-color: var(--stroke-dark);
+        box-shadow: 0 24px 60px -44px rgba(15, 23, 42, 0.75);
+      }
+
+      section h2 {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        font-size: 1.5rem;
+        margin-bottom: 1.4rem;
+        letter-spacing: -0.01em;
+      }
+
+      .muted {
+        color: var(--text-muted);
+      }
+
+      body[data-theme='dark'] .muted {
+        color: var(--text-muted-dark);
+      }
+
+      form {
+        display: grid;
+        gap: 1rem;
+      }
+
+      label {
+        display: grid;
+        gap: 0.35rem;
+        font-weight: 500;
+      }
+
+      .inline-control {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .inline-control input[type='checkbox'] {
+        width: 1.1rem;
+        height: 1.1rem;
+      }
+
+      input,
+      textarea,
+      select {
+        border-radius: 16px;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        padding: 0.9rem 1.05rem;
+        background: rgba(255, 255, 255, 0.82);
+        transition: border-color 0.3s ease, box-shadow 0.35s ease, background 0.35s ease;
+      }
+
+      body[data-theme='dark'] input,
+      body[data-theme='dark'] textarea,
+      body[data-theme='dark'] select {
+        background: rgba(15, 23, 42, 0.68);
+        border-color: rgba(71, 85, 105, 0.52);
+        color: inherit;
+      }
+
+      input:focus,
+      textarea:focus,
+      select:focus {
+        outline: none;
+        border-color: rgba(59, 130, 246, 0.8);
+        box-shadow: 0 15px 35px -30px rgba(59, 130, 246, 0.75), 0 0 0 3px rgba(99, 102, 241, 0.25);
+      }
+
+      button[type='submit'],
+      #dispatch-btn {
+        justify-self: start;
+        border-radius: 16px;
+        border: none;
+        padding: 0.75rem 1.3rem;
+        font-weight: 600;
+        color: #fff;
+        background: linear-gradient(135deg, var(--accent-start), var(--accent-end));
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        box-shadow: 0 22px 40px -28px var(--accent-glow);
+      }
+
+      button[type='submit']:hover,
+      #dispatch-btn:hover {
+        transform: translateY(-2px);
+      }
+
+      .grid {
+        display: grid;
+        gap: 1.5rem;
+      }
+
+      .grid[data-layout='cards'] {
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      }
+
+      .grid[data-layout='split'] {
+        grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      }
+
+      article {
+        position: relative;
+        background: rgba(15, 23, 42, 0.035);
+        border-radius: 20px;
+        padding: 1.5rem;
+        display: grid;
+        gap: 0.65rem;
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        overflow: hidden;
+        transition: transform 0.3s ease, border-color 0.3s ease, background 0.3s ease;
+      }
+
+      article::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.14), transparent 60%);
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        pointer-events: none;
+      }
+
+      article h3 {
+        font-size: 2rem;
+        font-weight: 700;
+      }
+
+      body[data-theme='dark'] article {
+        background: rgba(15, 23, 42, 0.55);
+        border-color: rgba(71, 85, 105, 0.42);
+      }
+
+      article:hover {
+        transform: translateY(-6px);
+        border-color: rgba(99, 102, 241, 0.55);
+      }
+
+      article:hover::after {
+        opacity: 1;
+      }
+
+      canvas {
+        max-width: 100%;
+      }
+
+      #ai-response {
+        min-height: 3rem;
+        padding: 1rem;
+        border-radius: 18px;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        background: rgba(15, 23, 42, 0.04);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+      }
+
+      body[data-theme='dark'] #ai-response {
+        background: rgba(15, 23, 42, 0.55);
+        border-color: rgba(71, 85, 105, 0.45);
+        box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.08);
+      }
+
+      #notification-output {
+        margin-top: 1rem;
+        border-radius: 16px;
+        padding: 1rem;
+        background: rgba(15, 23, 42, 0.04);
+        border: 1px solid rgba(148, 163, 184, 0.24);
+      }
+
+      body[data-theme='dark'] #notification-output {
+        background: rgba(15, 23, 42, 0.5);
+      }
+
+      #qr-reader {
+        border-radius: 20px;
+        overflow: hidden;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+      }
+
+      @media (max-width: 720px) {
+        body {
+          padding: 2.25rem 1rem 2.75rem;
+        }
+
+        header,
+        section {
+          padding: 1.9rem;
+        }
+
+        .toolbar {
+          gap: 0.6rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header>
+        <h1>Medizinprodukte Cockpit</h1>
+        <p class="muted">Browserbasierte Oberfläche mit Echtzeit-Dashboard, Offline-Sync und QR-Workflows.</p>
+        <div class="toolbar">
+          <button id="theme-toggle" type="button" class="secondary" aria-pressed="false">Dark Mode</button>
+          <span id="offline-indicator" role="status" aria-live="polite">Online</span>
+          <button id="install-btn" type="button" hidden>App installieren</button>
+        </div>
+      </header>
+
+      <section id="login-section">
+        <h2>🔐 Anmeldung</h2>
+        <form id="login-form">
+          <label>
+            Benutzername
+            <input type="text" id="username" required />
+          </label>
+          <label>
+            Passwort
+            <input type="password" id="password" required />
+          </label>
+          <button type="submit">Login</button>
+        </form>
+      </section>
+
+      <section id="dashboard" hidden>
+        <h2>📊 Dashboard</h2>
+        <div class="grid" data-layout="cards">
+          <article>
+            <h3 id="kpi-due">0</h3>
+            <p>Fällige Produkte</p>
+          </article>
+          <article>
+            <h3 id="kpi-repair">0</h3>
+            <p>In Reparatur</p>
+          </article>
+          <article>
+            <h3 id="kpi-expired">0</h3>
+            <p>Material abgelaufen</p>
+          </article>
+          <article>
+            <h3 id="kpi-low-stock">0</h3>
+            <p>Material zu niedrig</p>
+          </article>
+          <article>
+            <h3 id="kpi-maintenance">0</h3>
+            <p>Wartung in 30 Tagen</p>
+          </article>
+        </div>
+        <div class="grid" data-layout="split">
+          <article>
+            <canvas id="status-chart"></canvas>
+          </article>
+          <article>
+            <canvas id="repair-chart"></canvas>
+          </article>
+        </div>
+      </section>
+
+      <section id="scanner" hidden>
+        <h2>📷 Scanner</h2>
+        <p>Nutze die Kamera deines Geräts, um QR-/Barcodes einzulesen und Bestände zu aktualisieren.</p>
+        <div id="qr-reader" style="width: 100%; max-width: 420px"></div>
+        <p id="scan-result"></p>
+      </section>
+
+      <section id="notifications" hidden>
+        <h2>📬 Benachrichtigungen</h2>
+        <button id="dispatch-btn">Wartungs-Mails versenden</button>
+        <pre id="notification-output"></pre>
+      </section>
+
+      <section id="product-form-section" hidden>
+        <h2>➕ Produkt erfassen</h2>
+        <form id="product-form">
+          <div class="grid" data-layout="split">
+            <label>
+              Produktname
+              <input type="text" id="product-name" placeholder="z. B. Defibrillator" />
+            </label>
+            <label>
+              Typ
+              <input type="text" id="product-type" placeholder="z. B. Corpuls3" />
+            </label>
+            <label>
+              Seriennummer
+              <input type="text" id="product-serial" required />
+            </label>
+            <label>
+              Hersteller
+              <input type="text" id="product-manufacturer" />
+            </label>
+            <label>
+              Interne Kennung
+              <input type="text" id="product-internal" />
+            </label>
+            <label>
+              Kategorie
+              <select id="product-category">
+                <option value="">Bitte auswählen</option>
+              </select>
+            </label>
+            <label>
+              Standort
+              <select id="product-location">
+                <option value="">Bitte auswählen</option>
+              </select>
+            </label>
+            <label>
+              Fahrzeug
+              <select id="product-vehicle">
+                <option value="">Optional</option>
+              </select>
+            </label>
+            <label>
+              Status
+              <select id="product-status">
+                <option value="">Standard</option>
+              </select>
+            </label>
+          </div>
+          <div class="grid" data-layout="split">
+            <label>
+              Anschaffungsdatum
+              <input type="date" id="product-acquired" />
+            </label>
+            <label>
+              Letzte STK
+              <input type="date" id="product-last-stk" />
+            </label>
+            <label>
+              Letzte MTK
+              <input type="date" id="product-last-mtk" />
+            </label>
+            <label>
+              STK-Intervall (Monate)
+              <input type="number" id="product-stk-interval" min="0" step="1" />
+            </label>
+            <label>
+              MTK-Intervall (Monate)
+              <input type="number" id="product-mtk-interval" min="0" step="1" />
+            </label>
+          </div>
+          <button type="submit">Produkt anlegen</button>
+          <p class="muted" id="product-form-message" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section id="repair-form-section" hidden>
+        <h2>🛠️ Reparatur melden</h2>
+        <form id="repair-form">
+          <div class="grid" data-layout="split">
+            <label>
+              Produkt
+              <select id="repair-product" required>
+                <option value="">Bitte auswählen</option>
+              </select>
+            </label>
+            <label>
+              Datum
+              <input type="date" id="repair-date" required />
+            </label>
+            <label>
+              Kosten (€)
+              <input type="number" id="repair-cost" min="0" step="0.01" />
+            </label>
+            <label>
+              Kontakt
+              <select id="repair-contact">
+                <option value="">Optional</option>
+              </select>
+            </label>
+            <label class="inline-control">
+              <input type="checkbox" id="repair-mark-in-repair" checked />
+              Produktstatus auf „In Reparatur“ setzen
+            </label>
+            <label class="inline-control">
+              <input type="checkbox" id="repair-complete" />
+              Reparatur abgeschlossen
+            </label>
+          </div>
+          <label>
+            Beschreibung
+            <textarea id="repair-description" rows="3" placeholder="Kurzbeschreibung der Reparatur"></textarea>
+          </label>
+          <button type="submit">Reparatur speichern</button>
+          <p class="muted" id="repair-form-message" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section id="ai-assistant" hidden>
+        <h2>🤖 KI-Assistent</h2>
+        <form id="ai-form">
+          <label for="ai-prompt">Frage</label>
+          <textarea id="ai-prompt" rows="3" required aria-describedby="ai-hint"></textarea>
+          <small id="ai-hint">Tippe deine Frage ein. Offline-Anfragen werden automatisch synchronisiert.</small>
+          <button type="submit">Antwort abrufen</button>
+        </form>
+        <article id="ai-response" aria-live="polite"></article>
+      </section>
+
+      <section id="iot-section" hidden>
+        <h2>🌡️ IoT-Sensoren</h2>
+        <p role="status" id="iot-status">Keine Sensoren geladen.</p>
+        <ul id="iot-list"></ul>
+      </section>
+
+      <section id="ar-section" hidden>
+        <h2>🛠️ AR-Wartungsanleitung</h2>
+        <p>Scanne den Geräte-QR-Code um die AR-Anleitung im Einsatz zu öffnen.</p>
+        <ol id="ar-steps"></ol>
+      </section>
+    </main>
+  </body>
+</html>
