@@ -72,10 +72,12 @@ class AutocompleteCombobox(_BaseCombobox):
         if state == "readonly":
             kwargs["state"] = "normal"
         values = kwargs.pop("values", None)
-        super().__init__(master, *args, values=values, **kwargs)
+        # initialize flags before ttkbootstrap triggers configure during super().__init__
         self._match_mode = match_mode
         self._autocomplete_enabled = autocomplete
         self._updating_dropdown = False
+        self._autocomplete_values: List[str] = []
+        super().__init__(master, *args, values=values, **kwargs)
         self._autocomplete_values = self._normalize_values(values if values is not None else self.cget("values"))
         if self._autocomplete_enabled:
             self._install_autocomplete()
