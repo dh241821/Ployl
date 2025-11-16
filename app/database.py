@@ -3454,12 +3454,13 @@ class DatabaseManager:
         status: Optional[str] = None,
     ) -> List[sqlite3.Row]:
         like = f"%{term.lower()}%"
+        standort_name_expr = "COALESCE(s.ortsstelle, s.bezirksstelle, s.bezirk, s.bereich, s.land, '')"
         query = [
-            """
+            f"""
             SELECT pk.*, p.name AS produkt_name, p.seriennummer AS produkt_seriennummer,
                    p.id AS produkt_id, p.status AS produkt_status, p.interne_kennung,
                    p.standort_id, p.fahrzeug_id,
-                   s.bezeichnung AS standort_name, f.name AS fahrzeug_name,
+                   {standort_name_expr} AS standort_name, f.name AS fahrzeug_name,
                    kt.name AS komponententyp_name
             FROM produkt_komponenten AS pk
             JOIN produkte AS p ON p.id = pk.produkt_id
@@ -3472,8 +3473,8 @@ class DatabaseManager:
         params: List[Any] = [self._active_mandant_id]
         if term:
             query.append(
-                "AND (LOWER(pk.name) LIKE ? OR LOWER(pk.seriennummer) LIKE ? OR LOWER(p.name) LIKE ? "
-                "OR LOWER(p.seriennummer) LIKE ? OR LOWER(s.bezeichnung) LIKE ?)"
+                f"AND (LOWER(pk.name) LIKE ? OR LOWER(pk.seriennummer) LIKE ? OR LOWER(p.name) LIKE ? "
+                f"OR LOWER(p.seriennummer) LIKE ? OR LOWER({standort_name_expr}) LIKE ?)"
             )
             params.extend([like, like, like, like, like])
         if status:
