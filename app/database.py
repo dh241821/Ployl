@@ -1226,6 +1226,7 @@ class DatabaseManager:
                     kategorie_id INTEGER,
                     standort_id INTEGER,
                     fahrzeug_id INTEGER,
+                    mandant_id INTEGER NOT NULL DEFAULT 1,
                     status TEXT NOT NULL DEFAULT 'im_dienst',
                     interne_kennung TEXT,
                     stk_intervall INTEGER DEFAULT 12,
@@ -1583,6 +1584,7 @@ class DatabaseManager:
             "INTEGER REFERENCES produkt_hersteller(id)",
         )
         self._ensure_column("produkte", "informationstext", "TEXT")
+        self._ensure_column("produkte", "mandant_id", "INTEGER NOT NULL DEFAULT 1")
 
         self._ensure_column("fahrzeuge", "ausserbetrieb", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("fahrzeuge", "ausserbetriebnahme_datum", "TEXT")
