@@ -6,6 +6,7 @@ Medizinprodukte-Management System mit Desktop-GUI **und** Netzwerk-Backend. Die 
 - **Benutzerhandbuch:** [docs/benutzerhandbuch.md](docs/benutzerhandbuch.md)
 - **Technische Dokumentation:** [docs/system_architecture.md](docs/system_architecture.md)
 - **Roadmap & Prioritäten:** [docs/roadmap.md](docs/roadmap.md)
+- **Funktionsübersicht:** [docs/app_capabilities.md](docs/app_capabilities.md)
 
 ## Desktop Schnellstart
 
