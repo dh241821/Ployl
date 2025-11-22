@@ -2204,18 +2204,26 @@ class DatabaseManager:
                 label = f"{label} ({funkkennung})" if label else str(funkkennung)
         return label
 
-    def location_label(self, standort_id: Optional[int]) -> str:
+    def _get_location_cache_row(
+        self, standort_id: Optional[int]
+    ) -> Optional[sqlite3.Row]:
         if not standort_id:
-            return ""
+            return None
         if standort_id not in self._location_cache:
             row = self.connection.execute(
                 "SELECT * FROM standorte WHERE id = ?",
                 (standort_id,),
             ).fetchone()
             if not row:
-                return ""
+                return None
             self._location_cache[standort_id] = row
-        return self._location_label_from_row(self._location_cache[standort_id])
+        return self._location_cache.get(standort_id)
+
+    def location_label(self, standort_id: Optional[int]) -> str:
+        row = self._get_location_cache_row(standort_id)
+        if not row:
+            return ""
+        return self._location_label_from_row(row)
 
     def location_label_from_product(self, row: sqlite3.Row) -> str:
         if "standort_id" in row.keys() and row["standort_id"]:
@@ -2253,6 +2261,59 @@ class DatabaseManager:
         if cached["kennzeichen"]:
             label = f"{label} ({cached['kennzeichen']})"
         return label
+
+    def _descendant_location_ids(self, standort_id: int) -> List[int]:
+        row = self._get_location_cache_row(standort_id)
+        if not row:
+            return []
+        clauses: List[str] = []
+        params: List[Any] = []
+        mandant_value: Optional[int] = None
+        if "mandant_id" in row.keys():
+            mandant_raw = row["mandant_id"]
+            mandant_value = int(mandant_raw) if mandant_raw else None
+        clauses.append("mandant_id = ?")
+        params.append(mandant_value or self._active_mandant_id)
+        for column in ("land", "bereich", "bezirk", "bezirksstelle", "ortsstelle"):
+            if column not in row.keys():
+                continue
+            value = row[column]
+            if value not in (None, ""):
+                clauses.append(f"{column} = ?")
+                params.append(value)
+        where_sql = " AND ".join(clauses) if clauses else "1"
+        query = f"SELECT id FROM standorte WHERE {where_sql}"
+        rows = self.connection.execute(query, params).fetchall()
+        return [int(child["id"]) for child in rows if child["id"] is not None]
+
+    def _expand_location_permissions(
+        self, permissions: Dict[int, LocationPermission]
+    ) -> Dict[int, LocationPermission]:
+        if not permissions:
+            return {}
+        expanded: Dict[int, LocationPermission] = {
+            loc_id: LocationPermission(
+                standort_id=perm.standort_id,
+                lesen=perm.lesen,
+                schreiben=perm.schreiben,
+                label=perm.label,
+            )
+            for loc_id, perm in permissions.items()
+        }
+        for loc_id, perm in permissions.items():
+            for child_id in self._descendant_location_ids(loc_id):
+                existing = expanded.get(child_id)
+                if existing:
+                    existing.lesen = existing.lesen or perm.lesen
+                    existing.schreiben = existing.schreiben or perm.schreiben
+                    continue
+                expanded[child_id] = LocationPermission(
+                    standort_id=child_id,
+                    lesen=perm.lesen,
+                    schreiben=perm.schreiben,
+                    label=self.location_label(child_id),
+                )
+        return expanded
 
     def _lookup_cached_label(
         self,
@@ -2421,6 +2482,7 @@ class DatabaseManager:
             )
             for entry in location_entries
         }
+        expanded_permissions = self._expand_location_permissions(location_permissions)
         return User(
             id=int(row["id"]),
             username=row["username"],
@@ -2429,7 +2491,7 @@ class DatabaseManager:
             email=row["email"] or "",
             mandant_id=int(row["mandant_id"] or 1),
             **permission_kwargs,
-            location_permissions=location_permissions,
+            location_permissions=expanded_permissions,
         )
 
     def list_user_identifiers(self) -> List[Dict[str, str]]:

@@ -378,3 +378,46 @@ def test_upload_archive(tmp_path):
     assert any(row["id"] == doc_id for row in docs)
     manager.delete_upload_document(doc_id)
     assert not manager.list_upload_documents()
+
+
+def test_location_permission_inheritance(tmp_path):
+    manager = _create_db(tmp_path)
+    bezirk_id = manager.add_location("AT", "Mostviertel", "Bezirk X", "", "", "Bezirk")
+    bezirksstelle_id = manager.add_location(
+        "AT", "Mostviertel", "Bezirk X", "Bezirksstelle Y", "", "Stelle"
+    )
+    ortsstelle_id = manager.add_location(
+        "AT", "Mostviertel", "Bezirk X", "Bezirksstelle Y", "Ort Z", "Ort"
+    )
+
+    manager.add_or_update_user(
+        benutzer_id=None,
+        vorname="Max",
+        nachname="Bezirk",
+        dienstnummer="9001",
+        rolle="admin",
+        email="",
+        permissions=None,
+        location_permissions={bezirk_id: {"lesen": True, "schreiben": True}},
+    )
+    bezirk_user = manager.authenticate("9001", "9001")
+    assert bezirk_user is not None
+    assert bezirksstelle_id in bezirk_user.location_permissions
+    assert ortsstelle_id in bezirk_user.location_permissions
+    assert bezirk_user.can_write_location(bezirksstelle_id)
+    assert bezirk_user.can_write_location(ortsstelle_id)
+
+    manager.add_or_update_user(
+        benutzer_id=None,
+        vorname="Erika",
+        nachname="Stelle",
+        dienstnummer="9002",
+        rolle="technik",
+        email="",
+        permissions=None,
+        location_permissions={bezirksstelle_id: {"lesen": True, "schreiben": False}},
+    )
+    stelle_user = manager.authenticate("9002", "9002")
+    assert stelle_user is not None
+    assert stelle_user.can_read_location(ortsstelle_id)
+    assert stelle_user.can_write_location(ortsstelle_id) is False
